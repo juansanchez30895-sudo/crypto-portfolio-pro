@@ -3111,6 +3111,20 @@ select {
   background: var(--accent-dim);
 }
 
+/* La propia dirección también copia al tocarla/clicarla */
+.wallet-card code[data-copy-wallet] {
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.wallet-card code[data-copy-wallet]:hover {
+  color: var(--accent);
+}
+
+.wallet-card code.is-copied {
+  color: var(--accent);
+}
+
 @media (max-width: 768px) {
   .wallet-copy-btn {
     min-height: 44px;

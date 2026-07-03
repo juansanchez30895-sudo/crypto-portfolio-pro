@@ -466,9 +466,15 @@ async function copyTextToClipboard(text) {
   }
 }
 
-async function copyWalletAddress(button) {
-  const address = button.dataset.copyWallet || "";
-  const label = button.dataset.walletLabel || "";
+// Sirve tanto para el botón "Copiar" como para la propia dirección <code>:
+// se guarda el texto original para restaurarlo tras el feedback "Copiado".
+async function copyWalletAddress(element) {
+  if (element.classList.contains("is-copied")) {
+    return;
+  }
+
+  const address = element.dataset.copyWallet || "";
+  const label = element.dataset.walletLabel || "";
   if (!address) {
     return;
   }
@@ -479,11 +485,12 @@ async function copyWalletAddress(button) {
     return;
   }
 
-  button.textContent = t("buttons.copied");
-  button.classList.add("is-copied");
+  const originalText = element.textContent;
+  element.textContent = t("buttons.copied");
+  element.classList.add("is-copied");
   window.setTimeout(() => {
-    button.textContent = t("buttons.copy");
-    button.classList.remove("is-copied");
+    element.textContent = originalText;
+    element.classList.remove("is-copied");
   }, 1800);
   showToast(t("wallet.copiedTitle"), t("wallet.copiedText", { label }), "positive");
 }

@@ -21,6 +21,7 @@ const APP_SHELL = [
   "./icon-192.png",
   "./icon-512.png",
   "./icon-maskable-512.png",
+  "./apple-touch-icon.png",
 ];
 
 // Hosts de recursos estáticos externos (fuentes, librerías, iconos de monedas).
