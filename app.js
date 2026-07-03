@@ -440,6 +440,54 @@ function isOffline() {
   return typeof navigator !== "undefined" && navigator.onLine === false;
 }
 
+async function copyTextToClipboard(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Sin permiso o contexto no seguro: se intenta el fallback clásico.
+  }
+
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const copied = document.execCommand("copy");
+    area.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+async function copyWalletAddress(button) {
+  const address = button.dataset.copyWallet || "";
+  const label = button.dataset.walletLabel || "";
+  if (!address) {
+    return;
+  }
+
+  const copied = await copyTextToClipboard(address);
+  if (!copied) {
+    showToast(t("wallet.copyErrorTitle"), t("wallet.copyErrorText"), "warning");
+    return;
+  }
+
+  button.textContent = t("buttons.copied");
+  button.classList.add("is-copied");
+  window.setTimeout(() => {
+    button.textContent = t("buttons.copy");
+    button.classList.remove("is-copied");
+  }, 1800);
+  showToast(t("wallet.copiedTitle"), t("wallet.copiedText", { label }), "positive");
+}
+
 // Defer Chart.js download until the charts panel is actually about to show.
 function observeChartsPanelForLazyLoad() {
   if (!state.prefs.showCharts) return;
@@ -513,6 +561,10 @@ function bindEvents() {
     if (!event.target.closest("[data-row-id]")) {
       closeAllSuggestions();
     }
+  });
+
+  document.querySelectorAll("[data-copy-wallet]").forEach((button) => {
+    button.addEventListener("click", () => copyWalletAddress(button));
   });
 
   const moreActionsBtn = document.getElementById("moreActionsBtn");

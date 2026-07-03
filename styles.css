@@ -3089,6 +3089,34 @@ select {
   }
 }
 
+/* ── Copiar billeteras con un toque ── */
+
+.wallet-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.wallet-copy-btn {
+  min-height: 36px;
+  padding: 0 16px;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+
+.wallet-copy-btn.is-copied {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+@media (max-width: 768px) {
+  .wallet-copy-btn {
+    min-height: 44px;
+  }
+}
+
 /* ── Accesibilidad: iOS "reducir transparencia" ── */
 
 @media (prefers-reduced-transparency: reduce) {
