@@ -277,10 +277,7 @@ const dom = {
   appLoader: document.getElementById("appLoader"),
   loaderText: document.getElementById("loaderText"),
   toastStack: document.getElementById("toastStack"),
-  positionFilterInput: document.getElementById("positionFilterInput"),
-  quickAddBtn: document.getElementById("quickAddBtn"),
-  quickRefreshBtn: document.getElementById("quickRefreshBtn"),
-  quickSearchBtn: document.getElementById("quickSearchBtn")
+  positionFilterInput: document.getElementById("positionFilterInput")
 };
 
 init();
@@ -600,23 +597,6 @@ function bindEvents() {
     dom.positionFilterInput.addEventListener("input", (event) => {
       state.filterQuery = event.target.value;
       applyPositionFilter();
-    });
-  }
-
-  // Barra rápida móvil: reutiliza los botones existentes (misma lógica,
-  // mismos listeners) en lugar de duplicar handlers.
-  if (dom.quickAddBtn) {
-    dom.quickAddBtn.addEventListener("click", () => dom.addRowBtn.click());
-  }
-  if (dom.quickRefreshBtn) {
-    dom.quickRefreshBtn.addEventListener("click", () => dom.refreshPricesBtn.click());
-  }
-  if (dom.quickSearchBtn) {
-    dom.quickSearchBtn.addEventListener("click", () => {
-      document.querySelector(".table-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
-      window.setTimeout(() => {
-        dom.positionFilterInput?.focus({ preventScroll: true });
-      }, 350);
     });
   }
 
@@ -4418,13 +4398,6 @@ function setLoader(visible, label = t("loader.syncMarket")) {
   dom.appLoader.classList.toggle("is-visible", visible);
   dom.appLoader.setAttribute("aria-hidden", visible ? "false" : "true");
   dom.loaderText.textContent = label;
-
-  // El botón de actualizar de la barra rápida móvil refleja la carga y se
-  // deshabilita para evitar dobles toques.
-  if (dom.quickRefreshBtn) {
-    dom.quickRefreshBtn.disabled = visible;
-    dom.quickRefreshBtn.classList.toggle("is-loading", visible);
-  }
 }
 
 function updateSaveMessage(message) {
