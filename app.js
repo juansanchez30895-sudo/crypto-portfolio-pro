@@ -277,7 +277,9 @@ const dom = {
   appLoader: document.getElementById("appLoader"),
   loaderText: document.getElementById("loaderText"),
   toastStack: document.getElementById("toastStack"),
-  positionFilterInput: document.getElementById("positionFilterInput")
+  positionFilterInput: document.getElementById("positionFilterInput"),
+  mobileSortSelect: document.getElementById("mobileSortSelect"),
+  mobileSortDirBtn: document.getElementById("mobileSortDirBtn")
 };
 
 init();
@@ -600,6 +602,29 @@ function bindEvents() {
     });
   }
 
+  if (dom.mobileSortSelect) {
+    dom.mobileSortSelect.addEventListener("change", (event) => {
+      const nextKey = event.target.value;
+      if (state.prefs.sortBy !== nextKey) {
+        state.prefs.sortBy = nextKey;
+        // Misma convención que las cabeceras: texto ascendente, resto descendente.
+        state.prefs.sortDir = nextKey === "asset" ? "asc" : "desc";
+      }
+      savePreferences();
+      renderAll();
+      const column = TABLE_COLUMNS.find((item) => item.sortKey === nextKey);
+      updateSaveMessage(t("alerts.sortingBy", { column: column ? t(column.labelKey) : nextKey }));
+    });
+  }
+
+  if (dom.mobileSortDirBtn) {
+    dom.mobileSortDirBtn.addEventListener("click", () => {
+      state.prefs.sortDir = state.prefs.sortDir === "desc" ? "asc" : "desc";
+      savePreferences();
+      renderAll();
+    });
+  }
+
   const moreActionsBtn = document.getElementById("moreActionsBtn");
   const actionsToolbar = document.getElementById("actionsToolbar");
   if (moreActionsBtn && actionsToolbar) {
@@ -838,6 +863,34 @@ function renderTableHead() {
     </tr>
   `;
   applyColumnVisibility();
+  renderMobileSortControl();
+}
+
+// Control de orden para móvil (el thead está oculto en tarjetas): mismo
+// estado sortBy/sortDir que las cabeceras de escritorio, así ambos mandos
+// quedan siempre sincronizados.
+function renderMobileSortControl() {
+  if (!dom.mobileSortSelect) {
+    return;
+  }
+
+  const sortable = TABLE_COLUMNS.filter((column) => column.sortKey);
+  dom.mobileSortSelect.innerHTML = sortable
+    .map(
+      (column) => `
+        <option value="${column.sortKey}" ${state.prefs.sortBy === column.sortKey ? "selected" : ""}>
+          ${escapeHtml(t(column.labelKey))}
+        </option>
+      `
+    )
+    .join("");
+
+  if (dom.mobileSortDirBtn) {
+    const descending = state.prefs.sortDir === "desc";
+    dom.mobileSortDirBtn.innerHTML = descending ? "&darr;" : "&uarr;";
+    dom.mobileSortDirBtn.setAttribute("aria-label", descending ? t("table.sortDesc") : t("table.sortAsc"));
+    dom.mobileSortDirBtn.title = descending ? t("table.sortDesc") : t("table.sortAsc");
+  }
 }
 
 function renderHeaderCell(column) {

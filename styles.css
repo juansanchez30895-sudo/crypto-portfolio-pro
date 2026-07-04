@@ -3371,6 +3371,12 @@ select {
   border: none;
 }
 
+/* ── Orden en móvil (el thead está oculto en tarjetas) ── */
+
+.mobile-sort {
+  display: none;
+}
+
 /* ── Layout móvil v7 ── */
 
 @media (max-width: 768px) {
@@ -3606,6 +3612,37 @@ select {
     max-width: 100%;
   }
 
+  /* Control de orden móvil: selector de columna + botón de dirección */
+  .mobile-sort {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .mobile-sort-field {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .mobile-sort-field span {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 700;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .mobile-sort-dir {
+    flex: 0 0 auto;
+    min-width: 52px;
+    min-height: 44px;
+    font-size: 1.05rem;
+    font-weight: 700;
+  }
 }
 
 /* ── Accesibilidad: iOS "reducir transparencia" ── */

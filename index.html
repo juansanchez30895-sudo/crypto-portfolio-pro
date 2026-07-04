@@ -259,6 +259,20 @@
           />
         </div>
 
+        <div class="mobile-sort" id="mobileSort">
+          <label class="mobile-sort-field" for="mobileSortSelect">
+            <span data-i18n="table.sortBy">Ordenar por</span>
+            <select id="mobileSortSelect"></select>
+          </label>
+          <button
+            id="mobileSortDirBtn"
+            class="ghost-btn mobile-sort-dir"
+            type="button"
+            aria-label="Cambiar direccion de orden"
+            data-i18n-aria-label="table.sortDirAria"
+          >&darr;</button>
+        </div>
+
         <div class="column-toggles" id="columnToggles">
           <span class="column-toggles-label" data-i18n="table.showColumns">Columnas:</span>
           <button class="col-toggle-btn is-active" type="button" data-col-toggle="targets" id="toggleTargetsBtn" data-i18n="table.columns.targets">Objetivos</button>
