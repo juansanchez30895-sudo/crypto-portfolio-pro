@@ -78,6 +78,17 @@ function fetchWithTimeout(request, timeoutMs) {
   });
 }
 
+// GitHub Pages sirve con max-age=600: sin esto, la caché HTTP del navegador
+// puede devolver copias de hasta 10 min tras un deploy aunque el SW sea
+// network-first. "no-cache" fuerza revalidación con el origen (ETag → 304).
+function buildFreshRequest(request) {
+  if (request.mode === "navigate") {
+    // Un Request de navegación no se puede clonar: se recrea por URL.
+    return new Request(request.url, { cache: "no-cache", credentials: "same-origin" });
+  }
+  return new Request(request, { cache: "no-cache" });
+}
+
 // Shell: network-first. Garantiza que los cambios desplegados se ven en la
 // siguiente apertura; si no hay red (o tarda) se cae a la copia cacheada y
 // las navegaciones tienen como último recurso el index.html precacheado.
@@ -85,7 +96,7 @@ async function handleShellRequest(request) {
   const cache = await caches.open(SHELL_CACHE);
 
   try {
-    const response = await fetchWithTimeout(request, SHELL_NETWORK_TIMEOUT_MS);
+    const response = await fetchWithTimeout(buildFreshRequest(request), SHELL_NETWORK_TIMEOUT_MS);
     if (isCacheableResponse(response) && response.status === 200) {
       cache.put(request, response.clone());
     }
