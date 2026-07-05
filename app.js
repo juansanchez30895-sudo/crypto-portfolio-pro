@@ -67,7 +67,13 @@ async function ensureJsPdf() {
 const MAX_ACTIVITY_ITEMS = 18;
 const MAX_HISTORY_POINTS = 6000;
 const MAX_ROW_HISTORY_POINTS = 240;
-const AUTO_REFRESH_OPTIONS = [15, 60, 1800, 3600, 86400];
+const AUTO_REFRESH_OPTIONS = [300, 1800, 3600, 86400];
+// Datos de mercado globales (widgets de Inicio)
+const MARKET_CACHE_KEY = "crypto-dashboard-market-v1";
+const DOMINANCE_TTL = 60 * 1000;
+const FNG_TTL = 45 * 60 * 1000;
+const FNG_URL = "https://api.alternative.me/fng/?limit=1";
+const APP_TABS = ["home", "portfolio", "analytics", "more"];
 const CHART_RANGE_WINDOWS = {
   "1m": 60 * 1000,
   "1h": 60 * 60 * 1000,
@@ -93,17 +99,33 @@ const DEFAULT_PREFS = {
   currency: "usd",
   language: "es",
   portfolioName: "",
-  autoRefreshSec: 60,
+  autoRefreshSec: 1800,
   showCharts: true,
   chartRange: "total",
   sortBy: "currentValue",
   sortDir: "desc",
-  hiddenColumns: []
+  hiddenColumns: [],
+  hideBalance: false,
+  activeTab: "home"
 };
 
 const TOGGLEABLE_COLUMNS = ["priority", "targets", "tpSignal"];
 // Trío inversión/tokens/entrada: con dos datos se deriva el tercero.
 const TRIAD_FIELDS = ["investment", "tokens", "entryPrice"];
+// Opciones del selector de orden (móvil y escritorio). Incluye claves que
+// no tienen columna propia: variación 24h, capitalización, ranking y TP.
+const SORT_OPTIONS = [
+  { key: "currentValue", labelKey: "sort.positionValue" },
+  { key: "pnlPct", labelKey: "sort.pnl" },
+  { key: "change24h", labelKey: "sort.change24h" },
+  { key: "marketCap", labelKey: "sort.marketCap" },
+  { key: "marketCapRank", labelKey: "sort.rank" },
+  { key: "asset", labelKey: "sort.name" },
+  { key: "nextTp", labelKey: "sort.nextTp" },
+  { key: "investment", labelKey: "sort.invested" },
+  { key: "favorite", labelKey: "sort.priority" },
+  { key: "tpSignal", labelKey: "sort.tpSignal" }
+];
 const THEME_COLORS = { dark: "#050d14", light: "#f0f4f8" };
 
 // Portafolio de demostración genérico (la app es pública): cifras redondas
@@ -234,7 +256,18 @@ const state = {
   fxRateCache: new Map(),
   refreshRequestId: 0,
   currencySwitchId: 0,
-  filterQuery: ""
+  filterQuery: "",
+  lastRefreshAt: 0,
+  market: {
+    btc: null,
+    eth: null,
+    btcDominance: null,
+    fearGreed: null,
+    globalUpdatedAt: null,
+    fearGreedUpdatedAt: null,
+    loading: false,
+    error: null
+  }
 };
 
 const dom = {
@@ -279,7 +312,22 @@ const dom = {
   toastStack: document.getElementById("toastStack"),
   positionFilterInput: document.getElementById("positionFilterInput"),
   mobileSortSelect: document.getElementById("mobileSortSelect"),
-  mobileSortDirBtn: document.getElementById("mobileSortDirBtn")
+  mobileSortDirBtn: document.getElementById("mobileSortDirBtn"),
+  mainValue: document.getElementById("mainValue"),
+  mainPnlAbs: document.getElementById("mainPnlAbs"),
+  mainPnlPct: document.getElementById("mainPnlPct"),
+  mainUpdated: document.getElementById("mainUpdated"),
+  mainSparkline: document.getElementById("mainSparkline"),
+  mainSparklinePath: document.getElementById("mainSparklinePath"),
+  homeStatusLine: document.getElementById("homeStatusLine"),
+  homeRefreshBtn: document.getElementById("homeRefreshBtn"),
+  toggleBalanceBtn: document.getElementById("toggleBalanceBtn"),
+  marketGrid: document.getElementById("marketGrid"),
+  homeHighlights: document.getElementById("homeHighlights"),
+  autoRefreshMeta: document.getElementById("autoRefreshMeta"),
+  installCard: document.getElementById("installCard"),
+  shareSummaryBtn: document.getElementById("shareSummaryBtn"),
+  sheetBackdrop: document.getElementById("sheetBackdrop")
 };
 
 init();
@@ -329,11 +377,8 @@ function translateStaticContent() {
 }
 
 function getAutoRefreshLabel(seconds) {
-  if (seconds === 15) {
-    return "15s";
-  }
-  if (seconds === 60) {
-    return "1m";
+  if (seconds === 300) {
+    return "5m";
   }
   if (seconds === 1800) {
     return "30m";
@@ -345,6 +390,26 @@ function getAutoRefreshLabel(seconds) {
     return "24h";
   }
   return `${seconds}s`;
+}
+
+// "hace X" / "en X" para etiquetas de frescura de datos.
+function formatRelativeTime(timestampMs, future = false) {
+  const delta = future ? timestampMs - Date.now() : Date.now() - timestampMs;
+  if (!Number.isFinite(delta)) {
+    return "--";
+  }
+  if (delta < 60 * 1000) {
+    return future ? t("time.soon") : t("time.now");
+  }
+  const minutes = Math.floor(delta / 60000);
+  if (minutes < 60) {
+    return t(future ? "time.inMinutes" : "time.minutes", { n: minutes });
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return t(future ? "time.inHours" : "time.hours", { n: hours });
+  }
+  return t("time.days", { n: Math.floor(hours / 24) });
 }
 
 // Etiqueta bajo la celda de posición: indica qué campo del trío se está
@@ -441,10 +506,24 @@ function init() {
   bindEvents();
   bindEnvironmentEvents();
   syncColumnToggleButtons();
+  applyBalanceVisibility();
   renderAll();
+  setActiveTab(state.prefs.activeTab);
+  detectIosInstallCard();
   startAutoRefresh();
   observeChartsPanelForLazyLoad();
   observeHeroForStickyBar();
+
+  // Ticker ligero: refresca las etiquetas "hace X / en X" cada minuto.
+  window.setInterval(() => {
+    renderStatusCards();
+    if (dom.mainUpdated && state.lastRefreshAt) {
+      dom.mainUpdated.textContent = t("home.updatedAgo", {
+        time: formatRelativeTime(state.lastRefreshAt)
+      });
+    }
+    renderMarketSection();
+  }, 60000);
 
   window.setTimeout(() => {
     if (isOffline()) {
@@ -459,6 +538,124 @@ function init() {
 
 function isOffline() {
   return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
+function isMobileViewport() {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
+}
+
+// ── Pestañas ──
+function setActiveTab(tab) {
+  const nextTab = APP_TABS.includes(tab) ? tab : "home";
+  state.prefs.activeTab = nextTab;
+  document.body.dataset.activeTab = nextTab;
+
+  document.querySelectorAll("[data-tab-target]").forEach((button) => {
+    const active = button.dataset.tabTarget === nextTab;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-current", active ? "page" : "false");
+  });
+
+  if (nextTab === "analytics" && state.prefs.showCharts) {
+    // Chart.js se carga perezosamente solo al abrir Analitica; los skeletons
+    // del panel se ocultan cuando el primer render termina.
+    ensureChartJs()
+      .then(() => {
+        updateCharts(buildSnapshot());
+        window.requestAnimationFrame(() => {
+          state.charts.pie?.resize();
+          state.charts.line?.resize();
+        });
+      })
+      .catch(() => {});
+  }
+
+  savePreferences();
+  window.scrollTo({ top: 0 });
+}
+
+function applyBalanceVisibility() {
+  if (!dom.toggleBalanceBtn) {
+    return;
+  }
+  dom.toggleBalanceBtn.classList.toggle("is-hidden-balance", state.prefs.hideBalance);
+  dom.toggleBalanceBtn.setAttribute(
+    "aria-label",
+    state.prefs.hideBalance ? t("home.showBalance") : t("home.hideBalance")
+  );
+}
+
+// Tarjeta "Añadir al iPhone": solo Safari iOS sin instalar.
+function detectIosInstallCard() {
+  if (!dom.installCard) {
+    return;
+  }
+  const isIOS = /iphone|ipod|ipad/i.test(navigator.userAgent || "");
+  const isStandalone = window.matchMedia?.("(display-mode: standalone)")?.matches
+    || window.navigator.standalone === true;
+  if (isIOS && !isStandalone) {
+    dom.installCard.hidden = false;
+  }
+}
+
+// ── Bottom sheet de posiciones (móvil) ──
+function syncSheetBackdrop() {
+  const open = isMobileViewport() && state.rows.some((row) => row.detailsOpen);
+  if (dom.sheetBackdrop) {
+    dom.sheetBackdrop.hidden = !open;
+  }
+  document.body.classList.toggle("sheet-open", open);
+}
+
+function closeAllSheets() {
+  let hadOpen = false;
+  state.rows.forEach((row) => {
+    if (row.detailsOpen) {
+      row.detailsOpen = false;
+      hadOpen = true;
+    }
+  });
+  if (hadOpen && isMobileViewport()) {
+    renderTableBody();
+  }
+  syncSheetBackdrop();
+}
+
+// ── Compartir resumen ──
+async function handleShareSummary() {
+  const snapshot = buildSnapshot();
+  const totalPnl = snapshot.totals.currentValue - snapshot.totals.investment;
+  const totalPnlPct = snapshot.totals.investment
+    ? (totalPnl / snapshot.totals.investment) * 100
+    : 0;
+  const change = getPortfolio24hChange(snapshot);
+
+  const text = [
+    getPortfolioName(),
+    `${t("home.totalValue")}: ${formatCurrency(snapshot.totals.currentValue)}`,
+    `${t("share.pnlLabel")}: ${formatSignedCurrency(totalPnl)} (${formatPercent(totalPnlPct)})`,
+    change ? `${t("share.change24hLabel")}: ${formatSignedPercent(change.pct)}` : null,
+    "https://crypticwolf-apps.github.io/crypto-portfolio-pro/"
+  ].filter(Boolean).join("\n");
+
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: getPortfolioName(), text });
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        return;
+      }
+      // Compartir nativo falló: se cae a copiar al portapapeles.
+    }
+  }
+
+  const copied = await copyTextToClipboard(text);
+  showToast(
+    copied ? t("share.copiedTitle") : t("share.errorTitle"),
+    copied ? t("share.copiedText") : t("share.errorText"),
+    copied ? "positive" : "warning"
+  );
 }
 
 async function copyTextToClipboard(text) {
@@ -612,8 +809,8 @@ function bindEvents() {
       }
       savePreferences();
       renderAll();
-      const column = TABLE_COLUMNS.find((item) => item.sortKey === nextKey);
-      updateSaveMessage(t("alerts.sortingBy", { column: column ? t(column.labelKey) : nextKey }));
+      const option = SORT_OPTIONS.find((item) => item.key === nextKey);
+      updateSaveMessage(t("alerts.sortingBy", { column: option ? t(option.labelKey) : nextKey }));
     });
   }
 
@@ -625,14 +822,37 @@ function bindEvents() {
     });
   }
 
-  const moreActionsBtn = document.getElementById("moreActionsBtn");
-  const actionsToolbar = document.getElementById("actionsToolbar");
-  if (moreActionsBtn && actionsToolbar) {
-    moreActionsBtn.addEventListener("click", () => {
-      const open = actionsToolbar.classList.toggle("is-open");
-      moreActionsBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  // Pestañas (barra inferior en móvil, superior en escritorio)
+  document.querySelectorAll("[data-tab-target]").forEach((button) => {
+    button.addEventListener("click", () => setActiveTab(button.dataset.tabTarget));
+  });
+
+  // Inicio: actualizar (reutiliza el botón de Cartera) y ocultar saldo
+  if (dom.homeRefreshBtn) {
+    dom.homeRefreshBtn.addEventListener("click", () => dom.refreshPricesBtn.click());
+  }
+  if (dom.toggleBalanceBtn) {
+    dom.toggleBalanceBtn.addEventListener("click", () => {
+      state.prefs.hideBalance = !state.prefs.hideBalance;
+      savePreferences();
+      applyBalanceVisibility();
+      renderDashboardOnly();
     });
   }
+
+  if (dom.shareSummaryBtn) {
+    dom.shareSummaryBtn.addEventListener("click", handleShareSummary);
+  }
+
+  if (dom.sheetBackdrop) {
+    dom.sheetBackdrop.addEventListener("click", closeAllSheets);
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeAllSheets();
+    }
+  });
 
   const columnToggles = document.getElementById("columnToggles");
   if (columnToggles) {
@@ -679,8 +899,15 @@ function loadState() {
     state.prefs.language = DEFAULT_PREFS.language;
   }
   if (!AUTO_REFRESH_OPTIONS.includes(state.prefs.autoRefreshSec)) {
-    state.prefs.autoRefreshSec = DEFAULT_PREFS.autoRefreshSec;
+    // Migración: los intervalos antiguos de 15s/1m pasan a 5 minutos; el
+    // resto de valores desconocidos caen al predeterminado (30 minutos).
+    const previous = Number(state.prefs.autoRefreshSec);
+    state.prefs.autoRefreshSec = Number.isFinite(previous) && previous > 0 && previous < 300
+      ? 300
+      : DEFAULT_PREFS.autoRefreshSec;
   }
+  state.prefs.hideBalance = Boolean(state.prefs.hideBalance);
+  state.prefs.activeTab = APP_TABS.includes(state.prefs.activeTab) ? state.prefs.activeTab : "home";
   state.prefs.portfolioName = sanitizePortfolioNameInput(state.prefs.portfolioName);
   state.prefs.chartRange = resolveChartRange(state.prefs.chartRange);
   state.prefs.hiddenColumns = Array.isArray(state.prefs.hiddenColumns)
@@ -704,6 +931,42 @@ function loadState() {
     state.lastSyncLabel = t("status.lastSync", {
       time: formatDateTime(new Date(lastPersistedSync))
     });
+    state.lastRefreshAt = new Date(lastPersistedSync).getTime() || 0;
+  }
+
+  loadMarketCache();
+}
+
+function loadMarketCache() {
+  const cached = safeParse(localStorage.getItem(MARKET_CACHE_KEY));
+  if (!cached || typeof cached !== "object") {
+    return;
+  }
+
+  // Los precios cacheados solo valen si son de la misma moneda base.
+  if (cached.currency === state.prefs.currency) {
+    state.market.btc = cached.btc || null;
+    state.market.eth = cached.eth || null;
+    state.market.globalUpdatedAt = cached.globalUpdatedAt || null;
+    state.market.btcDominance = Number.isFinite(cached.btcDominance) ? cached.btcDominance : null;
+  }
+  state.market.fearGreed = cached.fearGreed || null;
+  state.market.fearGreedUpdatedAt = cached.fearGreedUpdatedAt || null;
+}
+
+function persistMarketCache() {
+  try {
+    localStorage.setItem(MARKET_CACHE_KEY, JSON.stringify({
+      currency: state.prefs.currency,
+      btc: state.market.btc,
+      eth: state.market.eth,
+      btcDominance: state.market.btcDominance,
+      globalUpdatedAt: state.market.globalUpdatedAt,
+      fearGreed: state.market.fearGreed,
+      fearGreedUpdatedAt: state.market.fearGreedUpdatedAt
+    }));
+  } catch {
+    // Cuota llena: los widgets siguen funcionando solo en memoria.
   }
 }
 
@@ -735,8 +998,19 @@ async function handleBaseCurrencyChange(nextCurrency) {
     }
 
     applyCurrencyConversionToPortfolio(previousCurrency, normalizedNextCurrency, conversionRate);
+
+    // Los widgets de mercado guardan precios en la moneda base anterior:
+    // se convierten al vuelo y el próximo refresco los trae ya nativos.
+    if (state.market.btc?.price) {
+      state.market.btc = { ...state.market.btc, price: convertNumericAmount(state.market.btc.price, conversionRate) };
+    }
+    if (state.market.eth?.price) {
+      state.market.eth = { ...state.market.eth, price: convertNumericAmount(state.market.eth.price, conversionRate) };
+    }
+
     state.prefs.currency = normalizedNextCurrency;
     dom.currencySelect.value = normalizedNextCurrency;
+    persistMarketCache();
     savePreferences();
 
     updateSaveMessage(t("alerts.baseCurrencyUpdated"));
@@ -794,6 +1068,9 @@ function createRow(partial = {}) {
     favorite: Boolean(partial.favorite),
     pinned: Boolean(partial.pinned),
     derivedField: TRIAD_FIELDS.includes(partial.derivedField) ? partial.derivedField : "",
+    marketCap: Number.isFinite(partial.marketCap) ? partial.marketCap : null,
+    marketCapRank: Number.isFinite(partial.marketCapRank) ? partial.marketCapRank : null,
+    marketCapUpdatedAt: partial.marketCapUpdatedAt || null,
     detailsOpen: false,
     suggestions: [],
     suggestionsOpen: false,
@@ -836,6 +1113,7 @@ function renderDashboardOnly() {
   // calcula una sola vez por repintado y se comparte entre secciones.
   const insights = getPortfolioInsights(snapshot);
   renderSummary(snapshot, insights);
+  renderMarketSection();
   renderInsights(insights);
   renderTotalsRow(snapshot);
   renderStickyBar(snapshot);
@@ -866,24 +1144,26 @@ function renderTableHead() {
   renderMobileSortControl();
 }
 
-// Control de orden para móvil (el thead está oculto en tarjetas): mismo
-// estado sortBy/sortDir que las cabeceras de escritorio, así ambos mandos
-// quedan siempre sincronizados.
+// Selector de orden: mismo estado sortBy/sortDir que las cabeceras de
+// escritorio, así ambos mandos quedan siempre sincronizados.
 function renderMobileSortControl() {
   if (!dom.mobileSortSelect) {
     return;
   }
 
-  const sortable = TABLE_COLUMNS.filter((column) => column.sortKey);
-  dom.mobileSortSelect.innerHTML = sortable
+  const known = SORT_OPTIONS.some((option) => option.key === state.prefs.sortBy);
+  dom.mobileSortSelect.innerHTML = SORT_OPTIONS
     .map(
-      (column) => `
-        <option value="${column.sortKey}" ${state.prefs.sortBy === column.sortKey ? "selected" : ""}>
-          ${escapeHtml(t(column.labelKey))}
+      (option) => `
+        <option value="${option.key}" ${state.prefs.sortBy === option.key ? "selected" : ""}>
+          ${escapeHtml(t(option.labelKey))}
         </option>
       `
     )
     .join("");
+  if (!known) {
+    dom.mobileSortSelect.selectedIndex = -1;
+  }
 
   if (dom.mobileSortDirBtn) {
     const descending = state.prefs.sortDir === "desc";
@@ -992,6 +1272,7 @@ function renderRow(row) {
               value="${escapeHtml(row.crypto)}"
             />
             <div class="asset-meta">
+              <span class="rank-badge" data-role="rankBadge" ${Number.isFinite(row.marketCapRank) ? "" : "hidden"}>#${Number.isFinite(row.marketCapRank) ? row.marketCapRank : ""}</span>
               <span class="lookup-meta ${lookupToneClass(row)}" data-role="lookupMeta">
                 ${renderLookupMeta(row)}
               </span>
@@ -1054,6 +1335,7 @@ function renderRow(row) {
         <div class="market-metrics">
           <div data-role="priceCell">${renderPriceCell(row)}</div>
           <strong class="money" data-role="currentValue">${formatCurrency(metrics.currentValue)}</strong>
+          <span class="cap-subline" data-role="capLine">${escapeHtml(formatCapLine(row))}</span>
         </div>
       </td>
 
@@ -1134,12 +1416,21 @@ function renderRow(row) {
             <strong class="money" data-role="csPrice">${metrics.currentPrice > 0 ? formatCurrency(metrics.currentPrice, getPriceDigits(metrics.currentPrice)) : "--"}</strong>
           </div>
           <div class="cs-item cs-right">
+            <span>${escapeHtml(t("card.change24h"))}</span>
+            <strong class="${toneClass(row.priceChange24h || 0)}" data-role="csChange">${Number.isFinite(row.priceChange24h) ? formatSignedPercent(row.priceChange24h) : "--"}</strong>
+          </div>
+          <div class="cs-item">
             <span>${escapeHtml(t("card.invested"))}</span>
             <strong class="money" data-role="csInvestment">${formatCurrency(metrics.investment)}</strong>
+          </div>
+          <div class="cs-item cs-right">
+            <span>${escapeHtml(t("card.cap"))}</span>
+            <strong data-role="csCap">${escapeHtml(Number.isFinite(row.marketCap) ? formatCompactCurrency(row.marketCap) : "--")}</strong>
           </div>
           <div class="cs-item cs-tp">
             <span>${escapeHtml(t("card.nextTp"))}</span>
             <strong class="${tpStatus.tone}" data-role="csTp">${escapeHtml(getNextTpSummary(metrics, tpStatus))}</strong>
+            <span class="tp-progress" aria-hidden="true"><span data-role="csTpBar" style="width:${getTpProgressPct(metrics) ?? 0}%"></span></span>
           </div>
         </div>
       </td>
@@ -1159,54 +1450,322 @@ function renderRow(row) {
   `;
 }
 
+// ── Ocultar saldo (icono de ojo en Inicio) ──
+function maskedCurrency(value, digits) {
+  return state.prefs.hideBalance ? "••••" : formatCurrency(value, digits);
+}
+
+function maskedSignedCurrency(value) {
+  return state.prefs.hideBalance ? "••••" : formatSignedCurrency(value);
+}
+
+// Variación 24h de toda la cartera derivada de los cambios por activo.
+function getPortfolio24hChange(snapshot) {
+  let delta = 0;
+  let base = 0;
+  snapshot.items.forEach(({ row, metrics }) => {
+    if (Number.isFinite(row.priceChange24h) && metrics.currentValue > 0) {
+      const previous = metrics.currentValue / (1 + row.priceChange24h / 100);
+      if (Number.isFinite(previous) && previous > 0) {
+        delta += metrics.currentValue - previous;
+        base += previous;
+      }
+    }
+  });
+  return base > 0 ? { pct: (delta / base) * 100, delta } : null;
+}
+
+// Posiciones con su siguiente TP pendiente, ordenadas por cercanía.
+function getNextTpCandidates(snapshot) {
+  return snapshot.items
+    .map(({ row, metrics }) => {
+      if (!(metrics.currentPrice > 0)) {
+        return null;
+      }
+      const targets = [["TP1", metrics.tp1], ["TP2", metrics.tp2], ["TP3", metrics.tp3]]
+        .filter(([, value]) => value > 0);
+      const next = targets.find(([, value]) => metrics.currentPrice < value);
+      if (!next) {
+        return null;
+      }
+      return {
+        row,
+        metrics,
+        label: next[0],
+        target: next[1],
+        pct: (next[1] / metrics.currentPrice - 1) * 100
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.pct - b.pct);
+}
+
+function summaryIconSvg(name) {
+  const icons = {
+    invested: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10"/><path d="M15 9.2c-.6-.8-1.7-1.2-3-1.2-1.8 0-3 .8-3 2s1.2 1.7 3 2 3 .8 3 2-1.2 2-3 2c-1.3 0-2.4-.4-3-1.2"/></svg>',
+    change: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 4 3 6-8"/><path d="M15 6h3v3"/></svg>',
+    assets: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg>',
+    target: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="0.5" fill="currentColor"/></svg>'
+  };
+  return icons[name] || "";
+}
+
 function renderSummary(snapshot, insights = getPortfolioInsights(snapshot)) {
-  const totalPnl = snapshot.totals.currentValue - snapshot.totals.investment;
-  const totalPnlPct = snapshot.totals.investment
-    ? (totalPnl / snapshot.totals.investment) * 100
-    : 0;
+  renderMainValueCard(snapshot);
+
+  const change = getPortfolio24hChange(snapshot);
+  const tpCandidates = getNextTpCandidates(snapshot);
+  const nextTp = tpCandidates[0] || null;
+  const activeCount = snapshot.items.filter(
+    (item) => item.metrics.investment > 0 || item.metrics.currentValue > 0
+  ).length;
 
   const cards = [
     {
-      label: t("summary.totalInvested"),
-      value: formatCurrency(snapshot.totals.investment),
-      detail: t("summary.loadedPositions", { count: snapshot.items.length }),
-      tone: "neutral"
+      icon: summaryIconSvg("invested"),
+      label: t("summary.investedShort"),
+      value: maskedCurrency(snapshot.totals.investment),
+      tone: ""
     },
     {
-      label: t("summary.totalValue"),
-      value: formatCurrency(snapshot.totals.currentValue),
-      detail: t("summary.liveAssets", { count: snapshot.connectedCount }),
-      tone: "neutral"
+      icon: summaryIconSvg("change"),
+      label: t("summary.change24h"),
+      value: change ? formatSignedPercent(change.pct) : "--",
+      tone: change ? toneClass(change.pct) : ""
     },
     {
-      label: t("summary.gainLoss"),
-      value: `${formatSignedCurrency(totalPnl)} / ${formatPercent(totalPnlPct)}`,
-      detail: t("summary.aggregatePnl"),
-      tone: toneClass(totalPnl) || "neutral"
+      icon: summaryIconSvg("assets"),
+      label: t("summary.assetsShort"),
+      value: String(activeCount),
+      tone: ""
     },
     {
-      label: t("insights.mostVolatile"),
-      value: insights.mostVolatile
-        ? `${assetDisplayName(insights.mostVolatile.row)} / ${formatPercent(insights.mostVolatile.historicalRangePct).replace("+", "")}`
-        : t("insights.notAvailable"),
-      detail: insights.mostVolatile
-        ? t("insights.historicalVariationPoints", { count: insights.mostVolatile.historicalPoints })
-        : t("insights.notAvailable"),
-      tone: insights.mostVolatile ? "warning" : "neutral"
+      icon: summaryIconSvg("target"),
+      label: t("summary.nextTpShort"),
+      value: nextTp ? `${assetDisplayName(nextTp.row)} +${nextTp.pct.toFixed(1)}%` : "--",
+      tone: nextTp ? "warning" : ""
     }
   ];
 
   dom.summaryGrid.innerHTML = cards
     .map(
       (card) => `
-        <article class="summary-card ${card.tone}">
-          <span>${escapeHtml(card.label)}</span>
+        <article class="summary-card mini ${card.tone}">
+          <span class="summary-icon" aria-hidden="true">${card.icon}</span>
           <strong>${escapeHtml(card.value)}</strong>
-          <p>${escapeHtml(card.detail)}</p>
+          <p>${escapeHtml(card.label)}</p>
         </article>
       `
     )
     .join("");
+
+  renderHomeHighlights(snapshot, insights, tpCandidates);
+}
+
+function renderMainValueCard(snapshot) {
+  if (!dom.mainValue) {
+    return;
+  }
+
+  const totalPnl = snapshot.totals.currentValue - snapshot.totals.investment;
+  const totalPnlPct = snapshot.totals.investment
+    ? (totalPnl / snapshot.totals.investment) * 100
+    : 0;
+
+  dom.mainValue.textContent = maskedCurrency(snapshot.totals.currentValue);
+  if (dom.mainPnlAbs) {
+    dom.mainPnlAbs.textContent = maskedSignedCurrency(totalPnl);
+    dom.mainPnlAbs.className = toneClass(totalPnl);
+  }
+  if (dom.mainPnlPct) {
+    dom.mainPnlPct.hidden = false;
+    dom.mainPnlPct.textContent = formatPercent(totalPnlPct);
+    dom.mainPnlPct.className = `delta-chip ${totalPnl > 0 ? "good" : totalPnl < 0 ? "error" : "warn"}`;
+  }
+  if (dom.mainUpdated) {
+    dom.mainUpdated.textContent = state.lastRefreshAt
+      ? t("home.updatedAgo", { time: formatRelativeTime(state.lastRefreshAt) })
+      : t("status.noSyncYet");
+  }
+
+  renderMainSparkline();
+}
+
+// Línea fina de 7 días bajo el valor total: solo con historial real (≥2 puntos).
+function renderMainSparkline() {
+  if (!dom.mainSparkline || !dom.mainSparklinePath) {
+    return;
+  }
+
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const points = state.history.filter(
+    (point) => point.currency === state.prefs.currency && new Date(point.at).getTime() >= cutoff
+  );
+
+  if (points.length < 2) {
+    dom.mainSparkline.hidden = true;
+    return;
+  }
+
+  const sampled = downsampleHistoryPoints(points, 60);
+  const values = sampled.map((point) => Number(point.total || 0));
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const coords = values.map((value, index) =>
+    `${((index / (values.length - 1)) * 100).toFixed(2)},${(26 - ((value - min) / span) * 23).toFixed(2)}`
+  );
+  dom.mainSparklinePath.setAttribute("points", coords.join(" "));
+  dom.mainSparkline.hidden = false;
+}
+
+function fngClassificationKey(value) {
+  if (value < 25) return "market.fgExtremeFear";
+  if (value < 45) return "market.fgFear";
+  if (value < 55) return "market.fgNeutral";
+  if (value < 75) return "market.fgGreed";
+  return "market.fgExtremeGreed";
+}
+
+// Widgets de Mercado en Inicio: BTC, ETH, dominancia y miedo/codicia.
+function renderMarketSection() {
+  if (!dom.marketGrid) {
+    return;
+  }
+
+  const market = state.market;
+  const freshness = market.globalUpdatedAt
+    ? formatRelativeTime(new Date(market.globalUpdatedAt).getTime())
+    : null;
+
+  const coinCard = (label, data) => {
+    if (!data || !Number.isFinite(data.price)) {
+      return '<article class="market-card market-skeleton" aria-hidden="true"><span class="skeleton-line w40"></span><span class="skeleton-line w70"></span><span class="skeleton-line w50"></span></article>';
+    }
+    const tone = data.change24h > 0 ? "positive" : data.change24h < 0 ? "negative" : "neutral";
+    return `
+      <article class="market-card">
+        <header>
+          ${data.image ? `<img src="${escapeHtml(data.image)}" alt="" loading="lazy" />` : ""}
+          <span>${escapeHtml(label)}</span>
+        </header>
+        <strong class="money">${formatCurrency(data.price, getPriceDigits(data.price))}</strong>
+        <span class="market-change ${tone}">${Number.isFinite(data.change24h) ? formatSignedPercent(data.change24h) : "--"} <small>24h</small></span>
+      </article>
+    `;
+  };
+
+  const dominance = Number.isFinite(market.btcDominance) ? market.btcDominance : null;
+  let dominanceCard = '<article class="market-card market-skeleton" aria-hidden="true"><span class="skeleton-line w40"></span><span class="skeleton-line w70"></span></article>';
+  if (dominance != null) {
+    const radius = 15.9;
+    const circumference = 2 * Math.PI * radius;
+    const filled = (Math.max(0, Math.min(100, dominance)) / 100) * circumference;
+    dominanceCard = `
+      <article class="market-card market-card-dominance">
+        <header><span>${escapeHtml(t("market.btcDominance"))}</span></header>
+        <svg viewBox="0 0 42 42" class="dominance-ring" aria-hidden="true">
+          <circle cx="21" cy="21" r="${radius}" fill="none" stroke="rgba(120,150,180,0.18)" stroke-width="3.4"/>
+          <circle cx="21" cy="21" r="${radius}" fill="none" stroke="var(--accent)" stroke-width="3.4" stroke-linecap="round"
+            stroke-dasharray="${filled.toFixed(2)} ${(circumference - filled).toFixed(2)}" transform="rotate(-90 21 21)"/>
+          <text x="21" y="24" text-anchor="middle" class="ring-text">${dominance.toFixed(2)}%</text>
+        </svg>
+        <span class="market-meta">${freshness ? escapeHtml(t("home.updatedAgo", { time: freshness })) : escapeHtml(t("market.savedData"))}</span>
+      </article>
+    `;
+  }
+
+  // Miedo y codicia: si no hay dato ni caché, la tarjeta simplemente no se pinta.
+  let fngCard = "";
+  const fng = market.fearGreed;
+  if (fng && Number.isFinite(fng.value)) {
+    const value = Math.max(0, Math.min(100, Number(fng.value)));
+    const isFresh = market.fearGreedUpdatedAt
+      && Date.now() - new Date(market.fearGreedUpdatedAt).getTime() < FNG_TTL * 2;
+    const freshLabel = isFresh
+      ? t("home.updatedAgo", { time: formatRelativeTime(new Date(market.fearGreedUpdatedAt).getTime()) })
+      : t("market.savedData");
+    fngCard = `
+      <article class="market-card market-card-fng">
+        <header><span>${escapeHtml(t("market.fearGreed"))}</span></header>
+        <div class="fng-value">
+          <strong>${value}</strong>
+          <span>${escapeHtml(t(fngClassificationKey(value)))}</span>
+        </div>
+        <div class="fng-bar" aria-hidden="true"><span class="fng-dot" style="left:${value}%"></span></div>
+        <span class="market-meta">${escapeHtml(freshLabel)} · ${escapeHtml(t("market.source"))}</span>
+      </article>
+    `;
+  }
+
+  dom.marketGrid.innerHTML = [
+    coinCard("BTC", market.btc),
+    coinCard("ETH", market.eth),
+    dominanceCard,
+    fngCard
+  ].filter(Boolean).join("");
+}
+
+// Bloques de Inicio: mejores, peores, próximos TP y alertas (máx. 3 c/u).
+function renderHomeHighlights(snapshot, insights, tpCandidates = getNextTpCandidates(snapshot)) {
+  if (!dom.homeHighlights) {
+    return;
+  }
+
+  const positionCard = (item, mode) => {
+    const row = item.row;
+    const pctText = mode === "tp" ? `+${item.pct.toFixed(1)}%` : formatPercent(item.metrics.pnlPct);
+    const tone = mode === "tp" ? "warning" : toneClass(item.metrics.pnlPct);
+    const detail = mode === "tp"
+      ? `${item.label} · ${formatCurrency(item.target, getPriceDigits(item.target))}`
+      : maskedCurrency(item.metrics.currentValue);
+    return `
+      <article class="hl-item">
+        <span class="asset-avatar">${renderAssetAvatar(row)}</span>
+        <div class="hl-main">
+          <strong>${escapeHtml(assetDisplayName(row))}</strong>
+          <small>${escapeHtml(detail)}</small>
+        </div>
+        <strong class="hl-pct ${tone}">${escapeHtml(pctText)}</strong>
+      </article>
+    `;
+  };
+
+  const block = (titleKey, items, mode) => (items.length
+    ? `
+      <section class="hl-block">
+        <h2 class="home-section-title">${escapeHtml(t(titleKey))}</h2>
+        <div class="hl-list">${items.map((item) => positionCard(item, mode)).join("")}</div>
+      </section>
+    `
+    : "");
+
+  const alerts = state.activity.filter((item) => item.tone !== "neutral").slice(0, 3);
+  const alertsBlock = alerts.length
+    ? `
+      <section class="hl-block">
+        <h2 class="home-section-title">${escapeHtml(t("home.alerts"))}</h2>
+        <div class="hl-list">
+          ${alerts.map((item) => `
+            <article class="hl-item hl-alert">
+              <div class="hl-main">
+                <strong class="${escapeHtml(item.tone)}">${escapeHtml(item.title)}</strong>
+                <small>${escapeHtml(item.detail)}</small>
+              </div>
+              <small class="hl-time">${escapeHtml(formatDateTime(new Date(item.at)))}</small>
+            </article>
+          `).join("")}
+        </div>
+      </section>
+    `
+    : "";
+
+  dom.homeHighlights.innerHTML = [
+    block("home.best", insights.topPerformers.slice(0, 3), "pnl"),
+    block("home.worst", insights.worstPerformers.slice(0, 3), "pnl"),
+    block("home.upcomingTp", tpCandidates.slice(0, 3), "tp"),
+    alertsBlock
+  ].join("");
 }
 
 function getInsightItems(snapshot) {
@@ -1412,10 +1971,12 @@ function renderStickyBar(snapshot) {
     dom.stickyBarName.textContent = getPortfolioName();
   }
   if (dom.stickyBarValue) {
-    dom.stickyBarValue.textContent = formatCurrency(snapshot.totals.currentValue);
+    dom.stickyBarValue.textContent = maskedCurrency(snapshot.totals.currentValue);
   }
   if (dom.stickyBarPnl) {
-    dom.stickyBarPnl.textContent = `${formatSignedCurrency(totalPnl)} (${formatPercent(totalPnlPct)})`;
+    dom.stickyBarPnl.textContent = state.prefs.hideBalance
+      ? formatPercent(totalPnlPct)
+      : `${formatSignedCurrency(totalPnl)} (${formatPercent(totalPnlPct)})`;
     dom.stickyBarPnl.className = `sticky-bar-pnl ${toneClass(totalPnl)}`;
   }
 }
@@ -1426,7 +1987,7 @@ function observeHeroForStickyBar() {
     return;
   }
 
-  const hero = document.querySelector(".hero-panel");
+  const hero = document.getElementById("mainValueCard");
   if (!hero || typeof window.IntersectionObserver === "undefined") {
     return;
   }
@@ -1513,6 +2074,23 @@ function renderStatusCards() {
   }
   if (dom.navSaveText) {
     dom.navSaveText.textContent = state.saveMessage;
+  }
+
+  if (dom.homeStatusLine) {
+    dom.homeStatusLine.textContent = `${readableApiStatus(state.apiStatus)} · ${state.lastSyncLabel}`;
+  }
+
+  if (dom.autoRefreshMeta) {
+    const parts = [];
+    if (state.lastRefreshAt) {
+      parts.push(t("more.lastUpdate", { time: formatRelativeTime(state.lastRefreshAt) }));
+      if (state.prefs.autoRefreshSec) {
+        parts.push(t("more.nextUpdate", {
+          time: formatRelativeTime(state.lastRefreshAt + state.prefs.autoRefreshSec * 1000, true)
+        }));
+      }
+    }
+    dom.autoRefreshMeta.textContent = parts.join(" · ");
   }
 }
 
@@ -1617,6 +2195,27 @@ function updateLiveRowUi(rowId) {
   setRole("csTp", (node) => {
     node.textContent = getNextTpSummary(metrics, tpStatus);
     node.className = tpStatus.tone;
+  });
+  setRole("csChange", (node) => {
+    node.textContent = Number.isFinite(row.priceChange24h) ? formatSignedPercent(row.priceChange24h) : "--";
+    node.className = toneClass(row.priceChange24h || 0);
+  });
+  setRole("csCap", (node) => {
+    node.textContent = Number.isFinite(row.marketCap) ? formatCompactCurrency(row.marketCap) : "--";
+  });
+  setRole("csTpBar", (node) => {
+    node.style.width = `${getTpProgressPct(metrics) ?? 0}%`;
+  });
+  setRole("capLine", (node) => {
+    node.textContent = formatCapLine(row);
+  });
+  setRole("rankBadge", (node) => {
+    if (Number.isFinite(row.marketCapRank)) {
+      node.textContent = `#${row.marketCapRank}`;
+      node.hidden = false;
+    } else {
+      node.hidden = true;
+    }
   });
   setRole("suggestions", (node) => {
     node.innerHTML = renderSuggestions(row);
@@ -1913,6 +2512,7 @@ function handleTableClick(event) {
       }
       clearTimersForRow(rowId);
       renderAll();
+      syncSheetBackdrop();
       scheduleAutosave();
       pushActivity(
         t("alerts.rowDeletedTitle"),
@@ -1924,13 +2524,22 @@ function handleTableClick(event) {
       refreshSingleRow(rowId, true);
       break;
     case "toggle-details": {
-      row.detailsOpen = !row.detailsOpen;
-      const rowElement = dom.tableBody.querySelector(`tr[data-row-id="${rowId}"]`);
-      if (rowElement) {
-        rowElement.classList.toggle("is-expanded", row.detailsOpen);
+      const willOpen = !row.detailsOpen;
+      if (isMobileViewport()) {
+        // En móvil el detalle abre como bottom sheet: solo uno a la vez.
+        state.rows.forEach((item) => { item.detailsOpen = false; });
+        row.detailsOpen = willOpen;
+        renderTableBody();
+        syncSheetBackdrop();
+      } else {
+        row.detailsOpen = willOpen;
+        const rowElement = dom.tableBody.querySelector(`tr[data-row-id="${rowId}"]`);
+        if (rowElement) {
+          rowElement.classList.toggle("is-expanded", row.detailsOpen);
+        }
+        button.setAttribute("aria-expanded", row.detailsOpen ? "true" : "false");
+        button.textContent = row.detailsOpen ? t("row.hideDetails") : t("row.showDetails");
       }
-      button.setAttribute("aria-expanded", row.detailsOpen ? "true" : "false");
-      button.textContent = row.detailsOpen ? t("row.hideDetails") : t("row.showDetails");
       break;
     }
     default:
@@ -1940,8 +2549,14 @@ function handleTableClick(event) {
 
 function handleAddRow() {
   const row = createRow();
+  if (isMobileViewport()) {
+    // Nueva posición en móvil: se abre directamente como bottom sheet.
+    state.rows.forEach((item) => { item.detailsOpen = false; });
+    row.detailsOpen = true;
+  }
   state.rows.push(row);
   renderAll();
+  syncSheetBackdrop();
   scheduleAutosave();
   pushActivity(t("alerts.newPositionTitle"), t("alerts.newPositionText"), "neutral");
 
@@ -2548,10 +3163,16 @@ function startAutoRefresh() {
 function bindEnvironmentEvents() {
   if (typeof document !== "undefined") {
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && state.prefs.autoRefreshSec) {
-        // Refresh once on resume so the user doesn't stare at stale prices.
+      if (document.visibilityState !== "visible" || !state.prefs.autoRefreshSec) {
+        return;
+      }
+      // Al volver a primer plano (clave en PWA de iOS): solo se refresca si
+      // ya pasó el intervalo configurado desde la última actualización.
+      const elapsed = Date.now() - (state.lastRefreshAt || 0);
+      if (elapsed >= state.prefs.autoRefreshSec * 1000) {
         refreshAllPrices({ silentWhenEmpty: true, force: false, reason: "auto" });
       }
+      renderStatusCards();
     });
   }
   if (typeof window !== "undefined") {
@@ -2853,7 +3474,13 @@ async function refreshAllPrices({ silentWhenEmpty = false, force = false, reason
       row.crypto = row.symbol || coin.name;
     });
 
-    const ids = [...new Set(state.rows.map((row) => row.coinId).filter(Boolean))];
+    // BTC y ETH viajan siempre en la misma petición agrupada: alimentan los
+    // widgets de Mercado aunque no estén en la cartera (cero llamadas extra).
+    const ids = [...new Set([
+      ...state.rows.map((row) => row.coinId).filter(Boolean),
+      "bitcoin",
+      "ethereum"
+    ])];
     const marketMap = await fetchMarketData(ids, { force });
     if (refreshRequestId !== state.refreshRequestId) {
       return;
@@ -2880,8 +3507,13 @@ async function refreshAllPrices({ silentWhenEmpty = false, force = false, reason
 
     const servedFromCache = [...marketMap.values()].some((market) => market && market.__fromCache);
 
+    updateGlobalMarketFromMap(marketMap, servedFromCache);
+
     if (!servedFromCache) {
       appendPortfolioHistory();
+      state.lastRefreshAt = Date.now();
+      // Dominancia y miedo/codicia se refrescan aparte con sus propias cachés.
+      refreshMarketExtras();
     }
     renderAll();
     persistState(false);
@@ -2923,6 +3555,100 @@ async function refreshAllPrices({ silentWhenEmpty = false, force = false, reason
   }
 }
 
+// Extrae BTC/ETH del mapa de mercados para los widgets de Inicio.
+function updateGlobalMarketFromMap(marketMap, fromCache) {
+  const pick = (id) => {
+    const item = marketMap.get(id);
+    if (!item || !Number.isFinite(item.current_price)) {
+      return null;
+    }
+    return {
+      price: item.current_price,
+      change24h: Number.isFinite(item.price_change_percentage_24h)
+        ? item.price_change_percentage_24h
+        : null,
+      image: item.image || ""
+    };
+  };
+
+  const btc = pick("bitcoin");
+  const eth = pick("ethereum");
+  if (btc) {
+    state.market.btc = btc;
+  }
+  if (eth) {
+    state.market.eth = eth;
+  }
+  if ((btc || eth) && !fromCache) {
+    state.market.globalUpdatedAt = new Date().toISOString();
+  }
+  persistMarketCache();
+}
+
+// Dominancia BTC (CoinGecko /global, TTL 60s) y miedo/codicia
+// (Alternative.me, TTL 45min). Nunca dos peticiones simultáneas; si la red
+// falla se conserva el último dato guardado.
+let marketExtrasInFlight = false;
+async function refreshMarketExtras(force = false) {
+  if (marketExtrasInFlight || isOffline()) {
+    return;
+  }
+  if (typeof document !== "undefined" && document.hidden) {
+    return;
+  }
+
+  marketExtrasInFlight = true;
+  state.market.loading = true;
+  try {
+    const now = Date.now();
+
+    const dominanceFresh = state.market.globalUpdatedAt
+      && Number.isFinite(state.market.btcDominance)
+      && now - new Date(state.market.globalUpdatedAt).getTime() < DOMINANCE_TTL;
+    if (force || !dominanceFresh) {
+      try {
+        const payload = await fetchJson(`${COINGECKO_BASE}global`);
+        const dominance = Number(payload?.data?.market_cap_percentage?.btc);
+        if (Number.isFinite(dominance) && !payload?.__swFallback) {
+          state.market.btcDominance = dominance;
+          state.market.globalUpdatedAt = new Date().toISOString();
+          state.market.error = null;
+        }
+      } catch {
+        state.market.error = "global";
+      }
+    }
+
+    const fngAge = state.market.fearGreedUpdatedAt
+      ? now - new Date(state.market.fearGreedUpdatedAt).getTime()
+      : Infinity;
+    if (fngAge >= FNG_TTL) {
+      try {
+        const payload = await fetchJsonDirect(FNG_URL, FETCH_TIMEOUT);
+        const item = payload?.data?.[0];
+        const value = Number(item?.value);
+        if (Number.isFinite(value)) {
+          state.market.fearGreed = {
+            value,
+            classification: String(item?.value_classification || ""),
+            timestamp: Number(item?.timestamp) || null,
+            timeUntilUpdate: Number(item?.time_until_update) || null
+          };
+          state.market.fearGreedUpdatedAt = new Date().toISOString();
+        }
+      } catch {
+        // Sin red hacia Alternative.me: se muestra el último dato guardado.
+      }
+    }
+
+    persistMarketCache();
+    renderMarketSection();
+  } finally {
+    state.market.loading = false;
+    marketExtrasInFlight = false;
+  }
+}
+
 function applyMarketDataToRow(row, market) {
   row.currentPrice = typeof market.current_price === "number" ? market.current_price : null;
   row.priceChange24h =
@@ -2940,6 +3666,13 @@ function applyMarketDataToRow(row, market) {
     row.lastPriceAt = row.lastPriceAt || null;
   } else {
     row.lastPriceAt = new Date().toISOString();
+    if (Number.isFinite(market.market_cap)) {
+      row.marketCap = market.market_cap;
+      row.marketCapUpdatedAt = row.lastPriceAt;
+    }
+    if (Number.isFinite(market.market_cap_rank)) {
+      row.marketCapRank = market.market_cap_rank;
+    }
     appendRowPriceHistory(row);
   }
   row.suggestions = [];
@@ -3342,6 +4075,10 @@ function applyCurrencyConversionToPortfolio(fromCurrency, toCurrency, conversion
       row.currentPrice = convertNumericAmount(row.currentPrice, conversionRate);
     }
 
+    if (Number.isFinite(row.marketCap)) {
+      row.marketCap = convertNumericAmount(row.marketCap, conversionRate, 0);
+    }
+
     if (Array.isArray(row.priceHistory) && row.priceHistory.length) {
       row.priceHistory = compactRowPriceHistory(
         row.priceHistory.map((point) => ({
@@ -3389,6 +4126,16 @@ function compareRows(a, b) {
   const valueA = sortValueFor(a, state.prefs.sortBy);
   const valueB = sortValueFor(b, state.prefs.sortBy);
 
+  // Los activos sin dato (p. ej. sin capitalización) van siempre al final,
+  // sea cual sea la dirección del orden.
+  const missingA = valueA === undefined || valueA === null
+    || (typeof valueA === "number" && !Number.isFinite(valueA));
+  const missingB = valueB === undefined || valueB === null
+    || (typeof valueB === "number" && !Number.isFinite(valueB));
+  if (missingA !== missingB) {
+    return missingA ? 1 : -1;
+  }
+
   if (typeof valueA === "string" || typeof valueB === "string") {
     const normalizedA = String(valueA || "");
     const normalizedB = String(valueB || "");
@@ -3433,9 +4180,27 @@ function sortValueFor(item, key) {
       return item.metrics.tp3;
     case "tpSignal":
       return getTpStatus(item.metrics).score;
+    case "change24h":
+      return Number.isFinite(item.row.priceChange24h) ? item.row.priceChange24h : undefined;
+    case "marketCap":
+      return Number.isFinite(item.row.marketCap) ? item.row.marketCap : undefined;
+    case "marketCapRank":
+      return Number.isFinite(item.row.marketCapRank) ? item.row.marketCapRank : undefined;
+    case "nextTp":
+      return getNextTpDistancePct(item.metrics);
     default:
       return item.index;
   }
+}
+
+// Distancia porcentual al siguiente TP pendiente (undefined si no aplica).
+function getNextTpDistancePct(metrics) {
+  if (!(metrics.currentPrice > 0)) {
+    return undefined;
+  }
+  const targets = [metrics.tp1, metrics.tp2, metrics.tp3].filter((value) => value > 0);
+  const next = targets.find((value) => metrics.currentPrice < value);
+  return next ? (next / metrics.currentPrice - 1) * 100 : undefined;
 }
 
 function buildSnapshot() {
@@ -3552,6 +4317,28 @@ function getTpStatus(metrics) {
   }
 
   return { tone: "error", label: t("row.farTarget", { target: nextTarget.label }), score: ratio };
+}
+
+// Progreso hacia el siguiente TP en % (100 = alcanzado, null = sin datos).
+function getTpProgressPct(metrics) {
+  const targets = [metrics.tp1, metrics.tp2, metrics.tp3].filter((value) => value > 0);
+  if (!targets.length || !(metrics.currentPrice > 0)) {
+    return null;
+  }
+  const next = targets.find((value) => metrics.currentPrice < value);
+  if (!next) {
+    return 100;
+  }
+  return Math.max(0, Math.min(100, (metrics.currentPrice / next) * 100));
+}
+
+// "#4 · 1,3 B$" — ranking y capitalización global del activo.
+function formatCapLine(row) {
+  if (!Number.isFinite(row.marketCap)) {
+    return "";
+  }
+  const rank = Number.isFinite(row.marketCapRank) ? `#${row.marketCapRank} · ` : "";
+  return `${rank}${formatCompactCurrency(row.marketCap)}`;
 }
 
 // Resumen corto del siguiente objetivo para la tarjeta móvil:
@@ -4350,6 +5137,9 @@ async function updateCharts(snapshot) {
     state.charts.line.data.datasets[0].pointBackgroundColor = accent;
     state.charts.line.update();
   }
+
+  // Con los gráficos ya pintados, los skeletons de Analítica sobran.
+  document.querySelectorAll(".chart-skeleton").forEach((node) => node.classList.add("hidden"));
 }
 
 function scheduleAutosave() {
@@ -4388,6 +5178,9 @@ function persistState(manual) {
         favorite: row.favorite,
         pinned: row.pinned,
         derivedField: row.derivedField,
+        marketCap: row.marketCap,
+        marketCapRank: row.marketCapRank,
+        marketCapUpdatedAt: row.marketCapUpdatedAt,
         alertsFired: row.alertsFired
       })),
       activity: state.activity.slice(0, MAX_ACTIVITY_ITEMS)

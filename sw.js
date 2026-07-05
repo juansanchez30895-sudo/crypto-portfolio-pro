@@ -33,8 +33,8 @@ const CDN_HOSTS = [
   "coin-images.coingecko.com",
 ];
 
-// Hosts de datos de mercado.
-const API_HOSTS = ["api.coingecko.com"];
+// Hosts de datos de mercado (precios + indice de miedo y codicia).
+const API_HOSTS = ["api.coingecko.com", "api.alternative.me"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

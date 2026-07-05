@@ -53,6 +53,25 @@
     </script>
   </head>
   <body>
+    <nav id="tabBar" class="tab-bar" aria-label="Navegacion principal" data-i18n-aria-label="nav.ariaLabel">
+      <button class="tab-btn is-active" type="button" data-tab-target="home" aria-current="page">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
+        <span data-i18n="nav.home">Inicio</span>
+      </button>
+      <button class="tab-btn" type="button" data-tab-target="portfolio" aria-current="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M3 10h18"/><path d="M15 14.5h3"/></svg>
+        <span data-i18n="nav.portfolio">Cartera</span>
+      </button>
+      <button class="tab-btn" type="button" data-tab-target="analytics" aria-current="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>
+        <span data-i18n="nav.analytics">Analitica</span>
+      </button>
+      <button class="tab-btn" type="button" data-tab-target="more" aria-current="false">
+        <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+        <span data-i18n="nav.more">Mas</span>
+      </button>
+    </nav>
+
     <div class="app-shell">
       <div id="appLoader" class="app-loader" role="status" aria-live="polite" aria-hidden="true">
         <span class="loader-ring"></span>
@@ -78,65 +97,49 @@
         </div>
       </div>
 
-      <header class="hero-panel">
-        <div class="hero-copy">
-          <p class="eyebrow" data-i18n="hero.eyebrow">Portfolio intelligence</p>
-          <h1 data-i18n="hero.title">Crypto Portfolio Pro</h1>
-          <p id="portfolioNameDisplay" class="portfolio-name-display">Mi Portafolio</p>
-        </div>
-
-        <div class="hero-side">
-          <div class="top-actions">
-            <label class="inline-field inline-field-wide" for="portfolioNameInput">
-              <span data-i18n="portfolio.label">Nombre del portafolio</span>
-              <input
-                id="portfolioNameInput"
-                class="inline-input"
-                type="text"
-                maxlength="60"
-                placeholder="Ej: Portafolio de Carlos"
-                data-i18n-placeholder="portfolio.placeholder"
-              />
-            </label>
-
-            <label class="inline-field" for="currencySelect">
-              <span data-i18n="controls.baseCurrency">Moneda base</span>
-              <select id="currencySelect">
-                <option value="usd">USD</option>
-                <option value="eur">EUR</option>
-              </select>
-            </label>
-
-            <label class="inline-field" for="autoRefreshSelect">
-              <span data-i18n="controls.autoRefresh">Auto refresh</span>
-              <select id="autoRefreshSelect">
-                <option value="15">15s</option>
-                <option value="60">1m</option>
-                <option value="1800">30m</option>
-                <option value="3600">1h</option>
-                <option value="86400">24h</option>
-              </select>
-            </label>
-
-            <button id="themeToggle" class="ghost-btn" type="button" data-i18n="theme.light">Modo claro</button>
+      <!-- ═══ PESTAÑA INICIO ═══ -->
+      <section class="tab-section" data-tab="home">
+        <header class="home-header">
+          <div class="home-header-main">
+            <p id="portfolioNameDisplay" class="portfolio-name-display">Mi Portafolio</p>
+            <p class="home-status" id="homeStatusLine">--</p>
           </div>
-
-          <div class="status-strip">
-            <article class="status-card">
-              <span class="status-label" data-i18n="status.api">API</span>
-              <strong id="apiStatus" data-i18n="status.ready">Listo</strong>
-              <small id="apiStatusMeta" data-i18n="status.syncManual">Sincroniza manualmente para cargar precios.</small>
-            </article>
-            <article class="status-card">
-              <span class="status-label" data-i18n="status.saved">Guardado</span>
-              <strong id="saveStatus" data-i18n="status.noPendingChanges">Sin cambios pendientes</strong>
-              <small id="lastSyncLabel" data-i18n="status.noSyncYet">Sin sincronizacion todavia</small>
-            </article>
+          <div class="home-header-actions">
+            <button id="toggleBalanceBtn" class="icon-circle-btn" type="button" aria-label="Ocultar saldo" data-i18n-aria-label="home.hideBalance">
+              <svg class="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="eye-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.1 6.1A17 17 0 0 0 2 12s3.5 7 10 7a10.4 10.4 0 0 0 5.9-1.9"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+            </button>
+            <button id="homeRefreshBtn" class="icon-circle-btn" type="button" aria-label="Actualizar precios" data-i18n-aria-label="home.refresh">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
+            </button>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <section class="summary-grid" id="summaryGrid" aria-label="Resumen del portafolio" data-i18n-aria-label="summary.ariaLabel"></section>
+        <section class="main-value-card" id="mainValueCard" aria-label="Valor total de la cartera" data-i18n-aria-label="home.totalValueAria">
+          <span class="mvc-label" data-i18n="home.totalValue">Valor total</span>
+          <strong class="mvc-value" id="mainValue">--</strong>
+          <div class="mvc-pnl">
+            <span id="mainPnlAbs" class="neutral">--</span>
+            <span id="mainPnlPct" class="delta-chip" hidden>--</span>
+          </div>
+          <svg id="mainSparkline" class="mvc-sparkline" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true" hidden>
+            <polyline id="mainSparklinePath" fill="none" stroke-width="1.5" points=""></polyline>
+          </svg>
+          <span class="mvc-meta" id="mainUpdated">--</span>
+        </section>
+
+        <section class="summary-grid" id="summaryGrid" aria-label="Resumen del portafolio" data-i18n-aria-label="summary.ariaLabel"></section>
+
+        <section class="market-section">
+          <h2 class="home-section-title" data-i18n="market.title">Mercado</h2>
+          <div id="marketGrid" class="market-grid"></div>
+        </section>
+
+        <section id="homeHighlights" class="home-highlights"></section>
+      </section>
+
+      <!-- ═══ PESTAÑA ANALITICA ═══ -->
+      <section class="tab-section" data-tab="analytics">
 
       <section class="panel insights-panel">
         <div class="panel-heading">
@@ -158,10 +161,7 @@
             <p class="eyebrow" data-i18n="charts.eyebrow">Visualizacion</p>
             <h2 data-i18n="charts.title">Distribucion y evolucion</h2>
           </div>
-          <p class="panel-copy" data-i18n="charts.copy">
-            La dona resume el peso actual de cada posicion y la linea guarda la evolucion
-            reciente del valor total del portafolio.
-          </p>
+          <button id="toggleChartsBtn" class="ghost-btn" type="button" data-i18n="buttons.hideCharts">Ocultar graficos</button>
         </div>
 
         <div class="chart-grid">
@@ -171,6 +171,7 @@
               <span class="chart-chip" data-i18n="charts.pie">Pie</span>
             </div>
             <div class="chart-stage">
+              <div class="chart-skeleton" aria-hidden="true"></div>
               <canvas id="portfolioPieChart" height="280"></canvas>
             </div>
           </article>
@@ -198,6 +199,7 @@
               </div>
             </div>
             <div class="chart-stage">
+              <div class="chart-skeleton" aria-hidden="true"></div>
               <canvas id="portfolioLineChart" height="280"></canvas>
               <div id="lineChartEmpty" class="chart-empty hidden" data-i18n="charts.emptyHistory">
                 Todavia no hay suficiente historial. Cada actualizacion de precios crea un punto nuevo.
@@ -207,29 +209,17 @@
         </div>
       </section>
 
+      </section>
+
+      <!-- ═══ PESTAÑA CARTERA ═══ -->
+      <section class="tab-section" data-tab="portfolio">
+
       <section class="panel controls-panel">
         <div class="toolbar" id="actionsToolbar">
           <div class="toolbar-group toolbar-primary">
             <button id="addRowBtn" class="primary-btn" type="button" data-i18n="buttons.newPosition">Nueva posicion</button>
             <button id="refreshPricesBtn" class="ghost-btn" type="button" data-i18n="buttons.refreshPrices">Actualizar precios</button>
             <button id="saveBtn" class="ghost-btn" type="button" data-i18n="buttons.save">Guardar</button>
-            <button
-              id="moreActionsBtn"
-              class="ghost-btn more-actions-btn"
-              type="button"
-              aria-expanded="false"
-              aria-controls="secondaryActions"
-              data-i18n="buttons.more"
-            >Mas opciones</button>
-          </div>
-
-          <div class="toolbar-group toolbar-group-end toolbar-secondary" id="secondaryActions">
-            <button id="toggleChartsBtn" class="ghost-btn" type="button" data-i18n="buttons.hideCharts">Ocultar graficos</button>
-            <button id="downloadPdfBtn" class="ghost-btn" type="button" data-i18n="buttons.downloadPdf">Descargar PDF</button>
-            <button id="exportBtn" class="ghost-btn" type="button" data-i18n="buttons.exportCsv">Exportar CSV</button>
-            <button id="importBtn" class="ghost-btn" type="button" data-i18n="buttons.importCsv">Importar CSV</button>
-            <button id="clearBtn" class="danger-btn" type="button" data-i18n="buttons.resetData">Resetear datos</button>
-            <input id="importFileInput" type="file" accept=".csv,text/csv" hidden />
           </div>
         </div>
       </section>
@@ -286,6 +276,97 @@
             <tbody id="tableBody"></tbody>
             <tfoot id="totalsFoot"></tfoot>
           </table>
+        </div>
+      </section>
+
+      </section>
+
+      <!-- ═══ PESTAÑA MAS ═══ -->
+      <section class="tab-section" data-tab="more">
+
+      <section class="panel install-card" id="installCard" hidden>
+        <div class="install-card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m8 7 4-4 4 4"/><rect x="4" y="11" width="16" height="10" rx="3"/></svg>
+        </div>
+        <div>
+          <strong data-i18n="install.title">Anade la app a tu iPhone</strong>
+          <p data-i18n="install.text">En Safari: boton Compartir y despues "Anadir a pantalla de inicio".</p>
+        </div>
+      </section>
+
+      <section class="panel more-settings-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow" data-i18n="more.settingsEyebrow">Ajustes</p>
+            <h2 data-i18n="more.settingsTitle">Preferencias</h2>
+          </div>
+        </div>
+
+        <div class="top-actions">
+          <label class="inline-field inline-field-wide" for="portfolioNameInput">
+            <span data-i18n="portfolio.label">Nombre del portafolio</span>
+            <input
+              id="portfolioNameInput"
+              class="inline-input"
+              type="text"
+              maxlength="60"
+              placeholder="Ej: Portafolio de Carlos"
+              data-i18n-placeholder="portfolio.placeholder"
+            />
+          </label>
+
+          <label class="inline-field" for="currencySelect">
+            <span data-i18n="controls.baseCurrency">Moneda base</span>
+            <select id="currencySelect">
+              <option value="usd">USD</option>
+              <option value="eur">EUR</option>
+            </select>
+          </label>
+
+          <label class="inline-field" for="autoRefreshSelect">
+            <span data-i18n="controls.autoRefreshLong">Actualizar precios automaticamente</span>
+            <select id="autoRefreshSelect">
+              <option value="300" data-i18n="autorefresh.5m">Cada 5 minutos</option>
+              <option value="1800" data-i18n="autorefresh.30m">Cada 30 minutos</option>
+              <option value="3600" data-i18n="autorefresh.1h">Cada 1 hora</option>
+              <option value="86400" data-i18n="autorefresh.24h">Cada 24 horas</option>
+            </select>
+          </label>
+
+          <button id="themeToggle" class="ghost-btn" type="button" data-i18n="theme.light">Modo claro</button>
+        </div>
+
+        <p class="autorefresh-meta" id="autoRefreshMeta"></p>
+
+        <div class="status-strip">
+          <article class="status-card">
+            <span class="status-label" data-i18n="status.api">API</span>
+            <strong id="apiStatus" data-i18n="status.ready">Listo</strong>
+            <small id="apiStatusMeta" data-i18n="status.syncManual">Sincroniza manualmente para cargar precios.</small>
+          </article>
+          <article class="status-card">
+            <span class="status-label" data-i18n="status.saved">Guardado</span>
+            <strong id="saveStatus" data-i18n="status.noPendingChanges">Sin cambios pendientes</strong>
+            <small id="lastSyncLabel" data-i18n="status.noSyncYet">Sin sincronizacion todavia</small>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel more-data-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow" data-i18n="more.dataEyebrow">Datos</p>
+            <h2 data-i18n="more.dataTitle">Exportar y compartir</h2>
+          </div>
+        </div>
+
+        <div class="more-actions-grid">
+          <button id="shareSummaryBtn" class="ghost-btn" type="button" data-i18n="buttons.shareSummary">Compartir resumen</button>
+          <button id="downloadPdfBtn" class="ghost-btn" type="button" data-i18n="buttons.downloadPdf">Descargar PDF</button>
+          <button id="exportBtn" class="ghost-btn" type="button" data-i18n="buttons.exportCsv">Exportar CSV</button>
+          <button id="importBtn" class="ghost-btn" type="button" data-i18n="buttons.importCsv">Importar CSV</button>
+          <button id="clearBtn" class="danger-btn" type="button" data-i18n="buttons.resetData">Resetear datos</button>
+          <input id="importFileInput" type="file" accept=".csv,text/csv" hidden />
         </div>
       </section>
 
@@ -374,7 +455,11 @@
         </div>
       </footer>
 
+      </section>
+
     </div>
+
+    <div id="sheetBackdrop" class="sheet-backdrop" hidden></div>
 
     <div id="toastStack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
   </body>
