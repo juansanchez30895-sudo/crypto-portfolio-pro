@@ -261,6 +261,7 @@ const state = {
   marketsQuery: "",
   marketsPage: 1,
   marketsLoading: false,
+  analyticsTab: "summary",
   lastRefreshAt: 0,
   market: {
     btc: null,
@@ -569,10 +570,7 @@ function setActiveTab(tab) {
     ensureChartJs()
       .then(() => {
         updateCharts(buildSnapshot());
-        window.requestAnimationFrame(() => {
-          state.charts.pie?.resize();
-          state.charts.line?.resize();
-        });
+        setAnalyticsTab(state.analyticsTab);
       })
       .catch(() => {});
   }
@@ -1689,6 +1687,7 @@ function bindEvents() {
   bindFab();
   bindAssetDetail();
   bindMarkets();
+  bindAnalyticsTabs();
 
   document.querySelectorAll("[data-copy-wallet]").forEach((button) => {
     button.addEventListener("click", () => copyWalletAddress(button));
@@ -2902,6 +2901,240 @@ function renderAnalyticsSummary(snapshot) {
       `
     )
     .join("");
+
+  // Sub-secciones de Analítica (comparativa, categoría, concentración, riesgo).
+  renderAnalyticsExtras(snapshot);
+}
+
+/* ── Sub-pestañas de Analítica ── */
+function bindAnalyticsTabs() {
+  const tabs = document.getElementById("analyticsTabs");
+  if (!tabs) {
+    return;
+  }
+  tabs.addEventListener("click", (event) => {
+    const tab = event.target.closest("[data-atab]");
+    if (!tab) return;
+    setAnalyticsTab(tab.dataset.atab);
+  });
+}
+
+function setAnalyticsTab(atab) {
+  state.analyticsTab = atab;
+  document.querySelectorAll("#analyticsTabs .sub-tab").forEach((n) =>
+    n.classList.toggle("is-active", n.dataset.atab === atab)
+  );
+  document.querySelectorAll('.tab-section[data-tab="analytics"] .atab-group').forEach((group) => {
+    group.hidden = group.dataset.atab !== atab;
+  });
+  // Chart.js creado con el contenedor oculto queda a 0px y resize() no lo
+  // recupera; se recrea el gráfico con su sub-pestaña ya visible. Un pequeño
+  // retardo asegura que el layout del grupo recién mostrado esté calculado.
+  if (atab === "performance" || atab === "distribution") {
+    window.setTimeout(() => {
+      if (typeof window.Chart === "undefined") {
+        return;
+      }
+      const target = atab === "distribution" ? "pie" : "line";
+      try { state.charts[target]?.destroy(); } catch { /* noop */ }
+      state.charts[target] = null;
+      updateCharts(buildSnapshot());
+    }, 60);
+  }
+}
+
+// Comparativa 24h, reparto por categoría, tabla de concentración y riesgo.
+function renderAnalyticsExtras(snapshot) {
+  renderAnalyticsBestWorst(snapshot);
+  renderAnalyticsCompare(snapshot);
+  renderAnalyticsCategory(snapshot);
+  renderAnalyticsConcentration(snapshot);
+  renderAnalyticsRisk(snapshot);
+}
+
+function renderAnalyticsBestWorst(snapshot) {
+  const box = document.getElementById("analyticsBestWorst");
+  if (!box) {
+    return;
+  }
+  const current = getCurrentInsightItems(snapshot);
+  const best = [...current].sort((a, b) => b.metrics.pnlPct - a.metrics.pnlPct)[0] || null;
+  const worst = [...current].sort((a, b) => a.metrics.pnlPct - b.metrics.pnlPct)[0] || null;
+
+  const card = (labelKey, item, tone) => `
+    <div class="bw-card">
+      <span>${escapeHtml(t(labelKey))}</span>
+      ${item ? `
+        <div class="bw-main">
+          <span class="asset-avatar">${renderAssetAvatar(item.row)}</span>
+          <strong>${escapeHtml(assetDisplayName(item.row))}</strong>
+        </div>
+        <strong class="bw-pct ${tone}">${formatPercent(item.metrics.pnlPct)}</strong>
+      ` : `<p class="movers-empty">${escapeHtml(t("home.noData"))}</p>`}
+    </div>
+  `;
+  box.innerHTML = card("analytics.best", best, "positive") + card("analytics.worst", worst, "negative");
+}
+
+function renderAnalyticsCompare(snapshot) {
+  const box = document.getElementById("analyticsCompare");
+  if (!box) {
+    return;
+  }
+  const change = getPortfolio24hChange(snapshot);
+  const rows = [
+    { label: t("analytics.myPortfolio"), pct: change ? change.pct : null, accent: true },
+    { label: "Bitcoin", pct: state.market.btc && Number.isFinite(state.market.btc.change24h) ? state.market.btc.change24h : null },
+    { label: "Ethereum", pct: state.market.eth && Number.isFinite(state.market.eth.change24h) ? state.market.eth.change24h : null }
+  ];
+  const values = rows.map((r) => Math.abs(r.pct || 0));
+  const maxAbs = Math.max(1, ...values);
+
+  box.innerHTML = rows.map((r) => {
+    const width = r.pct != null ? (Math.abs(r.pct) / maxAbs) * 100 : 0;
+    const tone = r.pct == null ? "" : r.pct >= 0 ? "positive" : "negative";
+    return `
+      <div class="compare-row ${r.accent ? "is-accent" : ""}">
+        <span class="compare-label">${escapeHtml(r.label)}</span>
+        <div class="compare-bar"><span class="${tone}" style="width:${width}%"></span></div>
+        <span class="compare-pct ${tone}">${r.pct != null ? formatSignedPercent(r.pct) : "--"}</span>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderAnalyticsCategory(snapshot) {
+  const box = document.getElementById("analyticsCategory");
+  if (!box) {
+    return;
+  }
+  const alloc = getAllocationBreakdown(snapshot);
+  if (!alloc) {
+    box.innerHTML = `<p class="movers-empty">${escapeHtml(t("home.noData"))}</p>`;
+    return;
+  }
+  const rows = [
+    { label: "BTC", pct: alloc.btc, color: "#f6b34c" },
+    { label: "ETH", pct: alloc.eth, color: "#7da4ff" },
+    { label: t("alloc.stables"), pct: alloc.stable, color: "#6d9ec4" },
+    { label: t("alloc.alts"), pct: alloc.alt, color: "#3effa8" }
+  ].filter((r) => r.pct > 0.05);
+
+  box.innerHTML = rows.map((r) => `
+    <div class="category-row">
+      <span class="category-label"><i style="background:${r.color}"></i>${escapeHtml(r.label)}</span>
+      <div class="category-bar"><span style="width:${r.pct.toFixed(1)}%;background:${r.color}"></span></div>
+      <strong>${r.pct.toFixed(1)}%</strong>
+    </div>
+  `).join("");
+}
+
+function renderAnalyticsConcentration(snapshot) {
+  const box = document.getElementById("analyticsConcentration");
+  if (!box) {
+    return;
+  }
+  const weights = snapshot.items
+    .filter((item) => item.metrics.currentValue > 0)
+    .map((item) => item.metrics.currentValue / (snapshot.totals.currentValue || 1) * 100)
+    .sort((a, b) => b - a);
+  if (!weights.length) {
+    box.innerHTML = `<p class="movers-empty">${escapeHtml(t("home.noData"))}</p>`;
+    return;
+  }
+  const topSum = (n) => weights.slice(0, n).reduce((s, v) => s + v, 0);
+  const rows = [
+    { label: t("analytics.top3"), value: topSum(3) },
+    { label: t("analytics.top5"), value: topSum(5) },
+    { label: t("analytics.top10"), value: topSum(10) }
+  ];
+  box.innerHTML = rows.map((r) => `
+    <div class="conc-row">
+      <span>${escapeHtml(r.label)}</span>
+      <div class="category-bar"><span style="width:${Math.min(100, r.value).toFixed(1)}%"></span></div>
+      <strong>${r.value.toFixed(1)}%</strong>
+    </div>
+  `).join("");
+}
+
+function renderAnalyticsRisk(snapshot) {
+  const box = document.getElementById("analyticsRisk");
+  if (!box) {
+    return;
+  }
+  const current = getCurrentInsightItems(snapshot);
+  const totalValue = snapshot.totals.currentValue || 1;
+
+  // Progreso medio hacia el siguiente TP.
+  const progresses = snapshot.items
+    .map((item) => getTpProgressPct(item.metrics))
+    .filter((p) => p != null);
+  const avgProgress = progresses.length ? progresses.reduce((s, v) => s + v, 0) / progresses.length : null;
+
+  // Concentración (mismo criterio que el resumen).
+  const top1 = current
+    .map((i) => ({ name: assetDisplayName(i.row), pct: i.metrics.currentValue / totalValue * 100 }))
+    .sort((a, b) => b.pct - a.pct)[0] || null;
+  const riskLevel = top1 ? (top1.pct > 40 ? "high" : top1.pct > 25 ? "medium" : "low") : null;
+  const riskLabels = { low: t("analytics.riskLow"), medium: t("analytics.riskMedium"), high: t("analytics.riskHigh") };
+  const riskTones = { low: "positive", medium: "warning", high: "negative" };
+
+  // Posiciones cerca del siguiente TP (<8%).
+  const nearTp = getNextTpCandidates(snapshot).filter((c) => c.pct <= 8).slice(0, 5);
+  // Posiciones con pérdida > 20%.
+  const losers = current.filter((i) => i.metrics.pnlPct <= -20)
+    .sort((a, b) => a.metrics.pnlPct - b.metrics.pnlPct).slice(0, 5);
+  // Sobreexpuestas (>40% del portafolio) → sugerencia de rebalanceo.
+  const overweight = current
+    .map((i) => ({ row: i.row, pct: i.metrics.currentValue / totalValue * 100 }))
+    .filter((i) => i.pct > 40);
+
+  const listBlock = (titleKey, rows, empty) => `
+    <div class="risk-list-block">
+      <h3 class="home-section-title">${escapeHtml(t(titleKey))}</h3>
+      ${rows.length ? `<div class="hl-list">${rows}</div>` : `<p class="movers-empty">${escapeHtml(empty)}</p>`}
+    </div>
+  `;
+
+  const nearRows = nearTp.map((c) => `
+    <article class="hl-item">
+      <span class="asset-avatar">${renderAssetAvatar(c.row)}</span>
+      <div class="hl-main"><strong>${escapeHtml(assetDisplayName(c.row))}</strong><small>${c.label}</small></div>
+      <strong class="hl-pct warning">+${c.pct.toFixed(1)}%</strong>
+    </article>
+  `).join("");
+  const loserRows = losers.map((i) => `
+    <article class="hl-item">
+      <span class="asset-avatar">${renderAssetAvatar(i.row)}</span>
+      <div class="hl-main"><strong>${escapeHtml(assetDisplayName(i.row))}</strong><small>${maskedCurrency(i.metrics.currentValue)}</small></div>
+      <strong class="hl-pct negative">${formatPercent(i.metrics.pnlPct)}</strong>
+    </article>
+  `).join("");
+  const overRows = overweight.map((i) => `
+    <article class="hl-item">
+      <span class="asset-avatar">${renderAssetAvatar(i.row)}</span>
+      <div class="hl-main"><strong>${escapeHtml(assetDisplayName(i.row))}</strong><small>${escapeHtml(t("analytics.rebalanceHint"))}</small></div>
+      <strong class="hl-pct warning">${i.pct.toFixed(1)}%</strong>
+    </article>
+  `).join("");
+
+  box.innerHTML = `
+    <div class="risk-gauges">
+      <div class="risk-gauge">
+        <span>${escapeHtml(t("analytics.concentration"))}</span>
+        <strong class="${riskLevel ? riskTones[riskLevel] : ""}">${riskLevel ? escapeHtml(riskLabels[riskLevel]) : "--"}</strong>
+        ${top1 ? `<small>${escapeHtml(top1.name)} ${top1.pct.toFixed(1)}%</small>` : ""}
+      </div>
+      <div class="risk-gauge">
+        <span>${escapeHtml(t("analytics.avgTp"))}</span>
+        <strong>${avgProgress != null ? avgProgress.toFixed(0) + "%" : "--"}</strong>
+        <div class="tp-progress"><span style="width:${avgProgress || 0}%"></span></div>
+      </div>
+    </div>
+    ${listBlock("analytics.nearTp", nearRows, t("analytics.nearTpEmpty"))}
+    ${listBlock("analytics.losers", loserRows, t("analytics.losersEmpty"))}
+    ${overweight.length ? listBlock("analytics.rebalance", overRows, "") : ""}
+  `;
 }
 
 function renderStickyBar(snapshot) {

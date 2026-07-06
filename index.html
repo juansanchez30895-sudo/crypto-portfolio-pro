@@ -185,51 +185,36 @@
       <!-- ═══ PESTAÑA ANALITICA ═══ -->
       <section class="tab-section" data-tab="analytics">
 
-      <section class="panel analytics-summary-panel">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow" data-i18n="analytics.eyebrow">Analitica</p>
-            <h2 data-i18n="analytics.summaryTitle">Resumen del rendimiento</h2>
-          </div>
+      <header class="home-header">
+        <div class="home-header-main">
+          <p class="portfolio-name-display" data-i18n="nav.analytics">Analitica</p>
         </div>
-        <div id="analyticsSummaryGrid" class="analytics-summary-grid"></div>
-      </section>
+      </header>
 
-      <section class="panel insights-panel">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow" data-i18n="insights.eyebrow">Insights</p>
-            <h2 data-i18n="insights.title">Insights del Portafolio</h2>
+      <nav class="sub-tabs" id="analyticsTabs" role="tablist">
+        <button class="sub-tab is-active" type="button" role="tab" data-atab="summary" data-i18n="analytics.tabSummary">Resumen</button>
+        <button class="sub-tab" type="button" role="tab" data-atab="performance" data-i18n="analytics.tabPerformance">Rendimiento</button>
+        <button class="sub-tab" type="button" role="tab" data-atab="distribution" data-i18n="analytics.tabDistribution">Distribucion</button>
+        <button class="sub-tab" type="button" role="tab" data-atab="risk" data-i18n="analytics.tabRisk">Riesgo</button>
+        <button class="sub-tab" type="button" role="tab" data-atab="activity" data-i18n="analytics.tabActivity">Actividad</button>
+      </nav>
+
+      <!-- Resumen -->
+      <div class="atab-group" data-atab="summary">
+        <section class="panel analytics-summary-panel">
+          <div class="panel-heading compact-heading">
+            <h2 class="home-section-title" data-i18n="analytics.summaryTitle">Resumen del rendimiento</h2>
           </div>
-          <p class="panel-copy" data-i18n="insights.subtitle">
-            Analisis en tiempo real de rendimiento y comportamiento.
-          </p>
-        </div>
+          <div id="analyticsSummaryGrid" class="analytics-summary-grid"></div>
+        </section>
+        <section class="panel">
+          <div id="analyticsBestWorst" class="best-worst-grid"></div>
+        </section>
+      </div>
 
-        <div id="insightsRankingsGrid" class="insights-rankings-grid"></div>
-      </section>
-
-      <section class="panel charts-panel" id="chartsPanel">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow" data-i18n="charts.eyebrow">Visualizacion</p>
-            <h2 data-i18n="charts.title">Distribucion y evolucion</h2>
-          </div>
-          <button id="toggleChartsBtn" class="ghost-btn" type="button" data-i18n="buttons.hideCharts">Ocultar graficos</button>
-        </div>
-
-        <div class="chart-grid">
-          <article class="chart-card">
-            <div class="chart-head">
-              <h3 data-i18n="charts.portfolioDistribution">Distribucion del portafolio</h3>
-              <span class="chart-chip" data-i18n="charts.pie">Pie</span>
-            </div>
-            <div class="chart-stage">
-              <div class="chart-skeleton" aria-hidden="true"></div>
-              <canvas id="portfolioPieChart" height="280"></canvas>
-            </div>
-          </article>
-
+      <!-- Rendimiento -->
+      <div class="atab-group" data-atab="performance" hidden>
+        <section class="panel charts-panel" id="chartsPanel">
           <article class="chart-card">
             <div class="chart-head">
               <div class="chart-head-copy">
@@ -249,7 +234,6 @@
                   <button class="range-chip" type="button" data-range="1y" data-i18n="charts.range1y">1a</button>
                   <button class="range-chip" type="button" data-range="total" data-i18n="charts.rangeTotal">Total</button>
                 </div>
-                <span class="chart-chip" data-i18n="charts.line">Linea</span>
               </div>
             </div>
             <div class="chart-stage">
@@ -260,8 +244,66 @@
               </div>
             </div>
           </article>
-        </div>
-      </section>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading compact-heading">
+            <h2 class="home-section-title" data-i18n="analytics.vsTitle">Comparativa 24h vs BTC y ETH</h2>
+          </div>
+          <div id="analyticsCompare" class="compare-block"></div>
+        </section>
+
+        <section class="panel insights-panel">
+          <div class="panel-heading compact-heading">
+            <h2 class="home-section-title" data-i18n="insights.title">Insights del Portafolio</h2>
+          </div>
+          <div id="insightsRankingsGrid" class="insights-rankings-grid"></div>
+        </section>
+
+        <button id="toggleChartsBtn" class="hidden" type="button" aria-hidden="true"></button>
+      </div>
+
+      <!-- Distribución -->
+      <div class="atab-group" data-atab="distribution" hidden>
+        <section class="panel">
+          <div class="panel-heading compact-heading">
+            <h2 class="home-section-title" data-i18n="charts.portfolioDistribution">Distribucion del portafolio</h2>
+          </div>
+          <div class="chart-stage">
+            <div class="chart-skeleton" aria-hidden="true"></div>
+            <canvas id="portfolioPieChart" height="280"></canvas>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-heading compact-heading">
+            <h2 class="home-section-title" data-i18n="analytics.byCategory">Por categoria</h2>
+          </div>
+          <div id="analyticsCategory" class="category-block"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-heading compact-heading">
+            <h2 class="home-section-title" data-i18n="analytics.concentrationTitle">Concentracion</h2>
+          </div>
+          <div id="analyticsConcentration" class="concentration-block"></div>
+        </section>
+      </div>
+
+      <!-- Riesgo -->
+      <div class="atab-group" data-atab="risk" hidden>
+        <section class="panel">
+          <div id="analyticsRisk" class="risk-block"></div>
+        </section>
+      </div>
+
+      <!-- Actividad -->
+      <div class="atab-group" data-atab="activity" hidden>
+        <section class="panel activity-panel">
+          <div class="panel-heading compact-heading">
+            <h2 class="home-section-title" data-i18n="activity.title">Historial simple</h2>
+          </div>
+          <div id="activityList" class="activity-list"></div>
+        </section>
+      </div>
 
       </section>
 
@@ -458,20 +500,6 @@
             </p>
           </article>
         </div>
-      </section>
-
-      <section class="panel activity-panel">
-        <div class="panel-heading side-heading">
-          <div>
-            <p class="eyebrow" data-i18n="activity.eyebrow">Actividad</p>
-            <h2 data-i18n="activity.title">Historial simple</h2>
-          </div>
-          <p class="panel-copy" data-i18n="activity.copy">
-            Registro secundario de acciones, alertas e importaciones recientes.
-          </p>
-        </div>
-
-        <div id="activityList" class="activity-list"></div>
       </section>
 
       <footer class="panel app-footer">

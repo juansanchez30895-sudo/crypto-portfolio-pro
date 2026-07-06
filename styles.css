@@ -5736,3 +5736,103 @@ body.detail-open { overflow: hidden; }
 
 .markets-skeleton { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; }
 .markets-skeleton .skeleton-line { height: 34px; width: 100%; }
+
+/* ═══════════════════════════════════════════════════════
+   ANALITICA v14 — sub-pestañas y bloques
+   ═══════════════════════════════════════════════════════ */
+
+.sub-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+.sub-tabs::-webkit-scrollbar { display: none; }
+.sub-tab {
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 0 14px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+.sub-tab.is-active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.atab-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: tabIn 0.2s ease;
+}
+.atab-group[hidden] { display: none; }
+
+/* Mejor / peor */
+.best-worst-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.bw-card {
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-card);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bw-card > span {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  color: var(--muted);
+}
+.bw-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bw-main .asset-avatar { width: 26px; height: 26px; }
+.bw-main strong { font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bw-pct { font-family: var(--font-mono); font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Comparativa vs BTC/ETH */
+.compare-block { display: flex; flex-direction: column; gap: 12px; }
+.compare-row { display: grid; grid-template-columns: 90px 1fr 64px; align-items: center; gap: 10px; }
+.compare-row.is-accent .compare-label { color: var(--accent); font-weight: 700; }
+.compare-label { font-size: 0.8rem; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compare-bar { height: 10px; border-radius: 99px; background: rgba(120,150,180,0.14); overflow: hidden; }
+.compare-bar span { display: block; height: 100%; border-radius: 99px; }
+.compare-bar span.positive { background: var(--positive); }
+.compare-bar span.negative { background: var(--negative); }
+.compare-pct { font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Categoría y concentración */
+.category-block, .concentration-block { display: flex; flex-direction: column; gap: 12px; }
+.category-row, .conc-row { display: grid; grid-template-columns: 110px 1fr 52px; align-items: center; gap: 10px; }
+.category-label { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; }
+.category-label i { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.category-bar { height: 10px; border-radius: 99px; background: rgba(120,150,180,0.14); overflow: hidden; }
+.category-bar span { display: block; height: 100%; border-radius: 99px; background: var(--accent-2); }
+.category-row strong, .conc-row strong { font-family: var(--font-mono); font-size: 0.82rem; text-align: right; font-variant-numeric: tabular-nums; }
+.conc-row span:first-child { font-size: 0.82rem; color: var(--text-2); }
+
+/* Riesgo */
+.risk-block { display: flex; flex-direction: column; gap: 16px; }
+.risk-gauges { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.risk-gauge {
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-card);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.risk-gauge span { font-family: var(--font-mono); font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; color: var(--muted); }
+.risk-gauge > strong { font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; }
+.risk-gauge small { font-size: 0.72rem; color: var(--muted); }
+.risk-gauge .tp-progress { height: 6px; margin-top: 2px; }
+.risk-list-block { display: flex; flex-direction: column; gap: 8px; }
