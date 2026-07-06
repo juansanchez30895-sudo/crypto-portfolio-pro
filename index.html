@@ -324,6 +324,22 @@
         <section class="panel">
           <div class="markets-movers" id="marketsMovers"></div>
         </section>
+
+        <section class="panel markets-ranking-panel">
+          <div class="markets-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+            <input id="marketsSearchInput" type="search" autocomplete="off" placeholder="Buscar activo..." data-i18n-placeholder="markets.search" aria-label="Buscar activo" data-i18n-aria-label="markets.search" />
+          </div>
+
+          <div class="markets-tabs" id="marketsTabs" role="tablist">
+            <button class="markets-tab is-active" type="button" role="tab" data-markets-tab="top" data-i18n="markets.topCap">Top por capitalizacion</button>
+            <button class="markets-tab" type="button" role="tab" data-markets-tab="fav" data-i18n="markets.favorites">Favoritos</button>
+            <button class="markets-tab" type="button" role="tab" data-markets-tab="meme" data-i18n="markets.meme">Meme Coins</button>
+          </div>
+
+          <div id="marketsRanking" class="markets-ranking"></div>
+          <div id="marketsPagination" class="markets-pagination"></div>
+        </section>
       </section>
 
       <!-- ═══ PESTAÑA MAS ═══ -->

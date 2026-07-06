@@ -70,10 +70,20 @@ const MAX_ROW_HISTORY_POINTS = 240;
 const AUTO_REFRESH_OPTIONS = [300, 1800, 3600, 86400];
 // Datos de mercado globales (widgets de Inicio)
 const MARKET_CACHE_KEY = "crypto-dashboard-market-v1";
+const MARKETS_LIST_KEY = "crypto-dashboard-markets-list-v1";
+const MARKETS_LIST_TTL = 5 * 60 * 1000;
+const MARKETS_PAGE_SIZE = 25;
 const DOMINANCE_TTL = 60 * 1000;
 const FNG_TTL = 45 * 60 * 1000;
 const FNG_URL = "https://api.alternative.me/fng/?limit=1";
 const APP_TABS = ["home", "markets", "analytics", "more"];
+// Símbolos meme conocidos para la pestaña "Meme Coins" (el endpoint /markets
+// no trae categoría; se filtra por símbolo sobre el top de capitalización).
+const MEME_SYMBOLS = new Set([
+  "DOGE", "SHIB", "PEPE", "WIF", "FLOKI", "BONK", "BOME", "MEME", "BRETT",
+  "MOG", "POPCAT", "PONKE", "NEIRO", "TURBO", "SPX", "GIGA", "PNUT", "FARTCOIN",
+  "MEW", "TRUMP", "BABYDOGE", "AKITA", "ELON"
+]);
 // Cada pestaña recuerda su posición de scroll: al volver no hay saltos ni
 // se hereda el desplazamiento de la pestaña anterior. (Debe declararse antes
 // de la llamada a init(): las const de módulo no se izan.)
@@ -245,6 +255,12 @@ const state = {
   detailRowId: null,
   detailTab: "summary",
   detailRange: "1d",
+  marketsList: [],
+  marketsListAt: 0,
+  marketsTab: "top",
+  marketsQuery: "",
+  marketsPage: 1,
+  marketsLoading: false,
   lastRefreshAt: 0,
   market: {
     btc: null,
@@ -1269,32 +1285,53 @@ function renderDetailNotes(row) {
   `;
 }
 
-// ── Pestaña Mercados: widgets + ganadores/perdedores 24h ──
+// ── Pestaña Mercados: widgets + ganadores/perdedores + ranking ──
 function renderMarketsTab() {
   const topGrid = document.getElementById("marketsTopGrid");
   if (topGrid) {
     // Reutiliza los mismos widgets del Pulso del mercado de Portafolio.
-    const clone = dom.marketGrid?.innerHTML;
-    topGrid.innerHTML = clone || "";
+    topGrid.innerHTML = dom.marketGrid?.innerHTML || "";
   }
 
+  // Trae el top de capitalización si la caché está caducada (una sola llamada).
+  fetchTopMarkets();
+  renderMarketsMovers();
+  renderMarketsRanking();
+}
+
+function renderMarketsMovers() {
   const moversBox = document.getElementById("marketsMovers");
   if (!moversBox) {
     return;
   }
-  const snapshot = buildSnapshot();
-  const items = get24hInsightItems(snapshot);
-  const gainers = [...items].sort((a, b) => b.change24h - a.change24h).slice(0, 5);
-  const losers = [...items].sort((a, b) => a.change24h - b.change24h).slice(0, 5);
 
+  // Prioriza los datos reales del top 100; si no hay, cae a la cartera.
+  let gainers;
+  let losers;
+  if (state.marketsList.length) {
+    const withChange = state.marketsList.filter((c) => Number.isFinite(c.change24h));
+    gainers = [...withChange].sort((a, b) => b.change24h - a.change24h).slice(0, 5)
+      .map((c) => ({ name: c.symbol, image: c.image, change24h: c.change24h }));
+    losers = [...withChange].sort((a, b) => a.change24h - b.change24h).slice(0, 5)
+      .map((c) => ({ name: c.symbol, image: c.image, change24h: c.change24h }));
+  } else {
+    const items = get24hInsightItems(buildSnapshot());
+    const map = (i) => ({ name: assetDisplayName(i.row), image: i.row.image, change24h: i.change24h });
+    gainers = [...items].sort((a, b) => b.change24h - a.change24h).slice(0, 5).map(map);
+    losers = [...items].sort((a, b) => a.change24h - b.change24h).slice(0, 5).map(map);
+  }
+
+  const avatar = (m) => m.image
+    ? `<span class="asset-avatar"><img src="${escapeHtml(m.image)}" alt="" loading="lazy" /></span>`
+    : `<span class="asset-avatar"><span>${escapeHtml(String(m.name || "?").slice(0, 3))}</span></span>`;
   const list = (title, rows, tone) => `
     <div class="movers-col">
       <h3 class="movers-title ${tone}">${escapeHtml(title)}</h3>
-      ${rows.length ? rows.map((item) => `
+      ${rows.length ? rows.map((m) => `
         <div class="mover-row">
-          <span class="asset-avatar">${renderAssetAvatar(item.row)}</span>
-          <span class="mover-name">${escapeHtml(assetDisplayName(item.row))}</span>
-          <span class="mover-pct ${toneClass(item.change24h)}">${formatSignedPercent(item.change24h)}</span>
+          ${avatar(m)}
+          <span class="mover-name">${escapeHtml(String(m.name || "").toUpperCase())}</span>
+          <span class="mover-pct ${toneClass(m.change24h)}">${formatSignedPercent(m.change24h)}</span>
         </div>
       `).join("") : `<p class="movers-empty">${escapeHtml(t("home.noData"))}</p>`}
     </div>
@@ -1306,6 +1343,227 @@ function renderMarketsTab() {
       ${list(t("markets.losers"), losers, "negative")}
     </div>
   `;
+}
+
+// Top 100 por capitalización (CoinGecko /coins/markets). Network-first con
+// caché en localStorage (TTL 5 min) y sin peticiones simultáneas.
+async function fetchTopMarkets(force = false) {
+  if (state.marketsLoading) {
+    return;
+  }
+  const fresh = Date.now() - state.marketsListAt < MARKETS_LIST_TTL;
+  if (!force && fresh && state.marketsList.length) {
+    return;
+  }
+  if (isOffline()) {
+    return;
+  }
+
+  state.marketsLoading = true;
+  renderMarketsRanking();
+  try {
+    const currency = state.prefs.currency;
+    const url = `${COINGECKO_BASE}coins/markets?vs_currency=${encodeURIComponent(currency)}&order=market_cap_desc&per_page=100&page=1&sparkline=false&price_change_percentage=24h`;
+    const payload = await fetchJson(url);
+    const rows = Array.isArray(payload) ? payload : [];
+    if (rows.length && !payload.__swFallback) {
+      state.marketsList = rows.map((item) => ({
+        id: item.id,
+        symbol: String(item.symbol || "").toUpperCase(),
+        name: item.name,
+        image: item.image || "",
+        price: Number(item.current_price),
+        change24h: Number(item.price_change_percentage_24h),
+        marketCap: Number(item.market_cap),
+        rank: Number(item.market_cap_rank)
+      }));
+      state.marketsListAt = Date.now();
+      state.marketsListCurrency = currency;
+      persistMarketsList();
+    }
+  } catch {
+    // Sin red o límite: se conserva la última lista cacheada.
+  } finally {
+    state.marketsLoading = false;
+    if (state.prefs.activeTab === "markets") {
+      renderMarketsMovers();
+      renderMarketsRanking();
+    }
+  }
+}
+
+function persistMarketsList() {
+  try {
+    localStorage.setItem(MARKETS_LIST_KEY, JSON.stringify({
+      at: state.marketsListAt,
+      currency: state.marketsListCurrency,
+      coins: state.marketsList
+    }));
+  } catch {
+    // Cuota: la lista sigue en memoria durante la sesión.
+  }
+}
+
+function loadMarketsListCache() {
+  const cached = safeParse(localStorage.getItem(MARKETS_LIST_KEY));
+  if (cached && Array.isArray(cached.coins) && cached.currency === state.prefs.currency) {
+    state.marketsList = cached.coins;
+    state.marketsListAt = Number(cached.at) || 0;
+    state.marketsListCurrency = cached.currency;
+  }
+}
+
+function getMarketsFiltered() {
+  const query = normalizeSearchText(state.marketsQuery || "");
+  const favIds = new Set(state.rows.filter((r) => r.favorite && r.coinId).map((r) => r.coinId));
+  let list = state.marketsList;
+  if (state.marketsTab === "fav") {
+    list = list.filter((c) => favIds.has(c.id));
+  } else if (state.marketsTab === "meme") {
+    list = list.filter((c) => MEME_SYMBOLS.has(c.symbol));
+  }
+  if (query) {
+    list = list.filter((c) =>
+      normalizeSearchText(c.name).includes(query) || normalizeSearchText(c.symbol).includes(query)
+    );
+  }
+  return list;
+}
+
+function renderMarketsRanking() {
+  const box = document.getElementById("marketsRanking");
+  const pag = document.getElementById("marketsPagination");
+  if (!box) {
+    return;
+  }
+
+  if (!state.marketsList.length) {
+    box.innerHTML = state.marketsLoading
+      ? `<div class="markets-skeleton">${Array.from({ length: 6 }).map(() => '<span class="skeleton-line w70"></span>').join("")}</div>`
+      : `<div class="detail-empty">${escapeHtml(isOffline() ? t("status.offlineMeta") : t("home.noData"))}</div>`;
+    if (pag) pag.innerHTML = "";
+    return;
+  }
+
+  const filtered = getMarketsFiltered();
+  const totalPages = Math.max(1, Math.ceil(filtered.length / MARKETS_PAGE_SIZE));
+  if (state.marketsPage > totalPages) {
+    state.marketsPage = 1;
+  }
+  const start = (state.marketsPage - 1) * MARKETS_PAGE_SIZE;
+  const pageItems = filtered.slice(start, start + MARKETS_PAGE_SIZE);
+  const ownedIds = new Set(state.rows.map((r) => r.coinId).filter(Boolean));
+
+  if (!pageItems.length) {
+    box.innerHTML = `<div class="detail-empty">${escapeHtml(t("markets.noResults"))}</div>`;
+    if (pag) pag.innerHTML = "";
+    return;
+  }
+
+  box.innerHTML = pageItems.map((c) => `
+    <button class="rank-row" type="button" data-market-coin="${escapeHtml(c.id)}">
+      <span class="rank-num">${Number.isFinite(c.rank) ? c.rank : "–"}</span>
+      <span class="asset-avatar">${c.image ? `<img src="${escapeHtml(c.image)}" alt="" loading="lazy" />` : `<span>${escapeHtml(c.symbol.slice(0, 3))}</span>`}</span>
+      <span class="rank-id">
+        <strong>${escapeHtml(c.symbol)}${ownedIds.has(c.id) ? ' <em class="rank-owned">●</em>' : ""}</strong>
+        <small>${escapeHtml(c.name)}</small>
+      </span>
+      <span class="rank-price">
+        <strong>${escapeHtml(formatCurrency(c.price, getPriceDigits(c.price)))}</strong>
+        <small class="${toneClass(c.change24h)}">${Number.isFinite(c.change24h) ? formatSignedPercent(c.change24h) : "--"}</small>
+      </span>
+      <span class="rank-cap">${Number.isFinite(c.marketCap) ? formatCompactCurrency(c.marketCap) : "--"}</span>
+    </button>
+  `).join("");
+
+  if (pag) {
+    if (totalPages <= 1) {
+      pag.innerHTML = "";
+    } else {
+      pag.innerHTML = `
+        <button class="pag-btn" type="button" data-markets-page="prev" ${state.marketsPage <= 1 ? "disabled" : ""}>‹</button>
+        <span class="pag-info">${state.marketsPage} / ${totalPages}</span>
+        <button class="pag-btn" type="button" data-markets-page="next" ${state.marketsPage >= totalPages ? "disabled" : ""}>›</button>
+      `;
+    }
+  }
+}
+
+function bindMarkets() {
+  const search = document.getElementById("marketsSearchInput");
+  if (search) {
+    search.addEventListener("input", (event) => {
+      state.marketsQuery = event.target.value;
+      state.marketsPage = 1;
+      renderMarketsRanking();
+    });
+  }
+  const tabs = document.getElementById("marketsTabs");
+  if (tabs) {
+    tabs.addEventListener("click", (event) => {
+      const tab = event.target.closest("[data-markets-tab]");
+      if (!tab) return;
+      state.marketsTab = tab.dataset.marketsTab;
+      state.marketsPage = 1;
+      tabs.querySelectorAll(".markets-tab").forEach((n) => n.classList.toggle("is-active", n === tab));
+      renderMarketsRanking();
+    });
+  }
+  const pag = document.getElementById("marketsPagination");
+  if (pag) {
+    pag.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-markets-page]");
+      if (!btn) return;
+      state.marketsPage += btn.dataset.marketsPage === "next" ? 1 : -1;
+      renderMarketsRanking();
+      document.getElementById("marketsRanking")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+  const ranking = document.getElementById("marketsRanking");
+  if (ranking) {
+    ranking.addEventListener("click", (event) => {
+      const coinBtn = event.target.closest("[data-market-coin]");
+      if (coinBtn) {
+        handleMarketCoinTap(coinBtn.dataset.marketCoin);
+      }
+    });
+  }
+}
+
+// Tocar una moneda del ranking: si está en cartera abre su detalle; si no,
+// ofrece añadirla al portafolio (crea posición precargada y abre el editor).
+function handleMarketCoinTap(coinId) {
+  const owned = state.rows.find((r) => r.coinId === coinId);
+  if (owned) {
+    openAssetDetail(owned.id);
+    return;
+  }
+  const coin = state.marketsList.find((c) => c.id === coinId);
+  if (!coin) {
+    return;
+  }
+  if (!window.confirm(t("markets.addConfirm", { asset: coin.name }))) {
+    return;
+  }
+  const row = createRow({
+    crypto: coin.symbol || coin.name,
+    coinId: coin.id,
+    resolvedName: coin.name,
+    symbol: coin.symbol,
+    image: coin.image,
+    currentPrice: coin.price,
+    priceChange24h: coin.change24h,
+    marketCap: coin.marketCap,
+    marketCapRank: coin.rank,
+    priceStatus: "success",
+    lastPriceAt: new Date().toISOString()
+  });
+  state.rows.push(row);
+  renderAll();
+  scheduleAutosave();
+  pushActivity(t("alerts.newPositionTitle"), t("markets.addedText", { asset: coin.name }), "neutral");
+  setActiveTab("home");
+  openPositionEditor(row.id);
 }
 
 async function copyTextToClipboard(text) {
@@ -1430,6 +1688,7 @@ function bindEvents() {
   bindPositionEditor();
   bindFab();
   bindAssetDetail();
+  bindMarkets();
 
   document.querySelectorAll("[data-copy-wallet]").forEach((button) => {
     button.addEventListener("click", () => copyWalletAddress(button));
@@ -1556,6 +1815,7 @@ function loadState() {
   }
 
   loadMarketCache();
+  loadMarketsListCache();
 }
 
 function loadMarketCache() {
@@ -1629,6 +1889,10 @@ async function handleBaseCurrencyChange(nextCurrency) {
       state.market.eth = { ...state.market.eth, price: convertNumericAmount(state.market.eth.price, conversionRate) };
     }
 
+    // El ranking de mercado está en la moneda anterior: se invalida para que
+    // se vuelva a pedir en la nueva al abrir Mercados.
+    state.marketsList = [];
+    state.marketsListAt = 0;
     state.prefs.currency = normalizedNextCurrency;
     dom.currencySelect.value = normalizedNextCurrency;
     persistMarketCache();
