@@ -3659,7 +3659,7 @@ select {
 }
 
 body[data-active-tab="home"] .tab-section[data-tab="home"],
-body[data-active-tab="portfolio"] .tab-section[data-tab="portfolio"],
+body[data-active-tab="markets"] .tab-section[data-tab="markets"],
 body[data-active-tab="analytics"] .tab-section[data-tab="analytics"],
 body[data-active-tab="more"] .tab-section[data-tab="more"] {
   display: flex;
@@ -5199,3 +5199,191 @@ th.col-actions .th-shell { justify-content: center; }
 .row-context-menu button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 body.editor-open { overflow: hidden; }
+
+/* ═══════════════════════════════════════════════════════
+   NAV v11 — dock de 5 con botón central "+" y su sheet
+   ═══════════════════════════════════════════════════════ */
+
+.tab-bar { grid-template-columns: repeat(5, 1fr); }
+
+.tab-fab {
+  position: relative;
+  background: none !important;
+  overflow: visible;
+}
+.tab-fab .tab-fab-circle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(150deg, var(--accent-2), #8f79ff);
+  box-shadow: 0 8px 22px rgba(90, 120, 255, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transition: transform 0.16s ease;
+}
+.tab-fab .tab-fab-circle svg { width: 24px; height: 24px; }
+.tab-fab:active .tab-fab-circle { transform: scale(0.9); }
+
+@media (max-width: 768px) {
+  .tab-fab .tab-fab-circle { margin-top: -22px; }
+}
+@media (min-width: 769px) {
+  .tab-fab { min-height: 44px; }
+  .tab-fab .tab-fab-circle { width: 40px; height: 40px; }
+  .tab-fab .tab-fab-circle svg { width: 20px; height: 20px; }
+}
+
+/* ── Bottom sheet del botón "+" ── */
+.fab-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 190;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.fab-sheet[hidden] { display: none; }
+
+.fab-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 8, 16, 0.6);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  animation: fadeIn 0.2s ease;
+}
+
+.fab-sheet-panel {
+  position: relative;
+  z-index: 1;
+  width: min(520px, 100%);
+  margin: 0 auto;
+  padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-radius: 24px 24px 0 0;
+  border: 1px solid var(--glass-border);
+  border-bottom: none;
+  background: var(--glass-inner), var(--glass-bg-strong);
+  backdrop-filter: blur(36px) saturate(185%);
+  -webkit-backdrop-filter: blur(36px) saturate(185%);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 -20px 60px rgba(1, 6, 14, 0.5);
+  animation: sheetUp 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.fab-sheet.is-closing .fab-sheet-panel { animation: sheetDown 0.2s ease forwards; }
+.fab-sheet.is-closing .fab-sheet-backdrop { animation: fadeOut 0.2s ease forwards; }
+
+@media (min-width: 769px) {
+  .fab-sheet { align-items: center; }
+  .fab-sheet-panel { border-radius: 24px; border-bottom: 1px solid var(--glass-border); animation: editorPop 0.24s ease; }
+}
+
+.fab-sheet-grip {
+  width: 38px;
+  height: 4px;
+  border-radius: 99px;
+  background: rgba(150, 175, 200, 0.4);
+  margin: 6px auto 4px;
+}
+.fab-sheet-title { font-size: 1.05rem; margin: 6px 4px 8px; }
+
+.fab-option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  background: var(--glass-card);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.12s ease, background 0.15s;
+}
+.fab-option:active { transform: scale(0.98); background: var(--panel-hover); }
+
+.fab-option-icon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+}
+.fab-option-icon svg { width: 22px; height: 22px; }
+.fab-option-icon.accent   { color: var(--accent-2); background: var(--accent-2-dim); }
+.fab-option-icon.accent2  { color: #8f79ff; background: rgba(143, 121, 255, 0.14); }
+.fab-option-icon.positive { color: var(--positive); background: var(--positive-bg); }
+.fab-option-icon.negative { color: var(--negative); background: var(--negative-bg); }
+.fab-option-icon.warning  { color: var(--warning); background: var(--warning-bg); }
+
+.fab-option-text { flex: 1; min-width: 0; }
+.fab-option-text strong { display: block; font-size: 0.92rem; }
+.fab-option-text small { color: var(--muted); font-size: 0.76rem; }
+.fab-option-chevron { color: var(--muted-2); font-size: 1.2rem; }
+
+.fab-cancel {
+  margin-top: 6px;
+  min-height: 50px;
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.fab-cancel:active { background: var(--panel-hover); }
+
+body.fab-open { overflow: hidden; }
+
+/* En móvil, la toolbar de escritorio (Nueva/Actualizar/Guardar) se oculta:
+   sus acciones viven en el botón "+". */
+@media (max-width: 768px) {
+  .desktop-only-toolbar { display: none; }
+}
+
+.compact-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.compact-heading .home-section-title { margin: 0; }
+.compact-heading .cartera-toolbar { margin: 0; }
+
+/* ── Pestaña Mercados: ganadores/perdedores ── */
+.movers-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 18px;
+}
+@media (max-width: 480px) {
+  .movers-grid { grid-template-columns: 1fr; }
+}
+.movers-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.movers-title.positive { color: var(--positive); }
+.movers-title.negative { color: var(--negative); }
+.mover-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.mover-row:last-child { border-bottom: none; }
+.mover-row .asset-avatar { width: 26px; height: 26px; flex-shrink: 0; }
+.mover-name { flex: 1; min-width: 0; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mover-pct { font-family: var(--font-mono); font-weight: 700; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.movers-empty { color: var(--muted); font-size: 0.82rem; padding: 8px 0; }

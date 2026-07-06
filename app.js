@@ -73,7 +73,7 @@ const MARKET_CACHE_KEY = "crypto-dashboard-market-v1";
 const DOMINANCE_TTL = 60 * 1000;
 const FNG_TTL = 45 * 60 * 1000;
 const FNG_URL = "https://api.alternative.me/fng/?limit=1";
-const APP_TABS = ["home", "portfolio", "analytics", "more"];
+const APP_TABS = ["home", "markets", "analytics", "more"];
 // Cada pestaña recuerda su posición de scroll: al volver no hay saltos ni
 // se hereda el desplazamiento de la pestaña anterior. (Debe declararse antes
 // de la llamada a init(): las const de módulo no se izan.)
@@ -558,6 +558,10 @@ function setActiveTab(tab) {
       .catch(() => {});
   }
 
+  if (nextTab === "markets") {
+    renderMarketsTab();
+  }
+
   savePreferences();
   updateStickyBarVisibility();
   const targetScroll = tabScrollPositions[nextTab] || 0;
@@ -625,6 +629,106 @@ async function handleShareSummary() {
     copied ? t("share.copiedText") : t("share.errorText"),
     copied ? "positive" : "warning"
   );
+}
+
+// ── Botón central "+" y su bottom sheet de acciones ──
+function bindFab() {
+  const fabBtn = document.getElementById("fabBtn");
+  const sheet = document.getElementById("fabSheet");
+  if (!fabBtn || !sheet) {
+    return;
+  }
+  fabBtn.addEventListener("click", () => openFabSheet());
+  sheet.addEventListener("click", (event) => {
+    if (event.target.closest("[data-fab-close]")) {
+      closeFabSheet();
+      return;
+    }
+    const action = event.target.closest("[data-fab-action]")?.dataset.fabAction;
+    if (action) {
+      closeFabSheet();
+      handleFabAction(action);
+    }
+  });
+}
+
+function openFabSheet() {
+  const sheet = document.getElementById("fabSheet");
+  if (sheet) {
+    sheet.hidden = false;
+    document.body.classList.add("fab-open");
+  }
+}
+
+function closeFabSheet() {
+  const sheet = document.getElementById("fabSheet");
+  if (!sheet) {
+    return;
+  }
+  sheet.classList.add("is-closing");
+  window.setTimeout(() => {
+    sheet.hidden = true;
+    sheet.classList.remove("is-closing");
+    document.body.classList.remove("fab-open");
+  }, 200);
+}
+
+function handleFabAction(action) {
+  switch (action) {
+    case "import":
+      dom.importFileInput?.click();
+      break;
+    case "new":
+    case "buy":
+    case "sell":
+    case "alert":
+      // Sin libro de operaciones separado: todas crean/editan una posición en
+      // el editor (donde se ajustan tokens, coste medio y objetivos/alertas).
+      setActiveTab("home");
+      handleAddRow();
+      break;
+    default:
+      break;
+  }
+}
+
+// ── Pestaña Mercados: widgets + ganadores/perdedores 24h ──
+function renderMarketsTab() {
+  const topGrid = document.getElementById("marketsTopGrid");
+  if (topGrid) {
+    // Reutiliza los mismos widgets del Pulso del mercado de Portafolio.
+    const clone = dom.marketGrid?.innerHTML;
+    topGrid.innerHTML = clone || "";
+  }
+
+  const moversBox = document.getElementById("marketsMovers");
+  if (!moversBox) {
+    return;
+  }
+  const snapshot = buildSnapshot();
+  const items = get24hInsightItems(snapshot);
+  const gainers = [...items].sort((a, b) => b.change24h - a.change24h).slice(0, 5);
+  const losers = [...items].sort((a, b) => a.change24h - b.change24h).slice(0, 5);
+
+  const list = (title, rows, tone) => `
+    <div class="movers-col">
+      <h3 class="movers-title ${tone}">${escapeHtml(title)}</h3>
+      ${rows.length ? rows.map((item) => `
+        <div class="mover-row">
+          <span class="asset-avatar">${renderAssetAvatar(item.row)}</span>
+          <span class="mover-name">${escapeHtml(assetDisplayName(item.row))}</span>
+          <span class="mover-pct ${toneClass(item.change24h)}">${formatSignedPercent(item.change24h)}</span>
+        </div>
+      `).join("") : `<p class="movers-empty">${escapeHtml(t("home.noData"))}</p>`}
+    </div>
+  `;
+
+  moversBox.innerHTML = `
+    <div class="movers-grid">
+      ${list(t("markets.gainers"), gainers, "positive")}
+      ${list(t("markets.losers"), losers, "negative")}
+    </div>
+  `;
 }
 
 async function copyTextToClipboard(text) {
@@ -747,6 +851,7 @@ function bindEvents() {
   dom.tableBody.addEventListener("keydown", handleTableKeyDown);
   dom.tableBody.addEventListener("click", handleTableClick);
   bindPositionEditor();
+  bindFab();
 
   document.querySelectorAll("[data-copy-wallet]").forEach((button) => {
     button.addEventListener("click", () => copyWalletAddress(button));
@@ -840,6 +945,11 @@ function loadState() {
       : DEFAULT_PREFS.autoRefreshSec;
   }
   state.prefs.hideBalance = Boolean(state.prefs.hideBalance);
+  // Migración: la antigua pestaña "portfolio" (posiciones) ahora vive dentro
+  // de "home" (Portafolio); cualquier valor desconocido cae a "home".
+  if (state.prefs.activeTab === "portfolio") {
+    state.prefs.activeTab = "home";
+  }
   state.prefs.activeTab = APP_TABS.includes(state.prefs.activeTab) ? state.prefs.activeTab : "home";
   state.prefs.portfolioName = sanitizePortfolioNameInput(state.prefs.portfolioName);
   state.prefs.chartRange = resolveChartRange(state.prefs.chartRange);
