@@ -239,61 +239,23 @@
         </div>
       </section>
 
+      <section class="cartera-summary" id="carteraSummary" aria-label="Resumen de la cartera"></section>
+
       <section class="panel table-panel table-panel-full">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow" data-i18n="table.eyebrow">Posiciones</p>
-            <h2 data-i18n="table.title">Tabla avanzada del portafolio</h2>
+        <div class="cartera-toolbar">
+          <div class="mobile-sort" id="mobileSort">
+            <label class="mobile-sort-field" for="mobileSortSelect">
+              <span data-i18n="table.sortBy">Ordenar por</span>
+              <select id="mobileSortSelect"></select>
+            </label>
+            <button
+              id="mobileSortDirBtn"
+              class="ghost-btn mobile-sort-dir"
+              type="button"
+              aria-label="Cambiar direccion de orden"
+              data-i18n-aria-label="table.sortDirAria"
+            >&darr;</button>
           </div>
-          <p class="panel-copy" data-i18n="table.copy">
-            Ordena por cualquier columna, marca favoritos, accede a la web del activo y usa
-            busqueda asistida contra CoinGecko.
-          </p>
-        </div>
-
-        <div class="quick-filters" id="quickFilters" role="group" aria-label="Filtros rapidos" data-i18n-aria-label="filters.ariaLabel">
-          <button class="qf-chip is-active" type="button" data-quick-filter="all" data-i18n="filters.all">Todos</button>
-          <button class="qf-chip" type="button" data-quick-filter="gaining" data-i18n="filters.gaining">Ganando</button>
-          <button class="qf-chip" type="button" data-quick-filter="losing" data-i18n="filters.losing">Perdiendo</button>
-          <button class="qf-chip" type="button" data-quick-filter="favorites" data-i18n="filters.favorites">Favoritos</button>
-          <button class="qf-chip" type="button" data-quick-filter="btc">BTC</button>
-          <button class="qf-chip" type="button" data-quick-filter="eth">ETH</button>
-          <button class="qf-chip" type="button" data-quick-filter="stable" data-i18n="filters.stables">Stables</button>
-          <button class="qf-chip" type="button" data-quick-filter="alt" data-i18n="filters.alts">Altcoins</button>
-        </div>
-
-        <div class="table-filter">
-          <input
-            id="positionFilterInput"
-            class="inline-input"
-            type="search"
-            autocomplete="off"
-            placeholder="Filtrar por nombre, simbolo o id..."
-            data-i18n-placeholder="table.filterPlaceholder"
-            aria-label="Filtrar posiciones"
-            data-i18n-aria-label="table.filterAria"
-          />
-        </div>
-
-        <div class="mobile-sort" id="mobileSort">
-          <label class="mobile-sort-field" for="mobileSortSelect">
-            <span data-i18n="table.sortBy">Ordenar por</span>
-            <select id="mobileSortSelect"></select>
-          </label>
-          <button
-            id="mobileSortDirBtn"
-            class="ghost-btn mobile-sort-dir"
-            type="button"
-            aria-label="Cambiar direccion de orden"
-            data-i18n-aria-label="table.sortDirAria"
-          >&darr;</button>
-        </div>
-
-        <div class="column-toggles" id="columnToggles">
-          <span class="column-toggles-label" data-i18n="table.showColumns">Columnas:</span>
-          <button class="col-toggle-btn is-active" type="button" data-col-toggle="targets" id="toggleTargetsBtn" data-i18n="table.columns.targets">Objetivos</button>
-          <button class="col-toggle-btn is-active" type="button" data-col-toggle="tpSignal" id="toggleSignalBtn" data-i18n="table.columns.tpSignal">Senal TP</button>
-          <button class="col-toggle-btn is-active" type="button" data-col-toggle="priority" id="togglePriorityBtn" data-i18n="table.columns.priority">Prioridad</button>
         </div>
 
         <div class="table-wrap">
@@ -488,7 +450,7 @@
 
     </div>
 
-    <div id="sheetBackdrop" class="sheet-backdrop" hidden></div>
+    <div id="positionEditorPortal" class="editor-portal" hidden></div>
 
     <div id="toastStack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
   </body>

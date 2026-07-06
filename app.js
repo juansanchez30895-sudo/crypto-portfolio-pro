@@ -78,6 +78,9 @@ const APP_TABS = ["home", "portfolio", "analytics", "more"];
 // se hereda el desplazamiento de la pestaña anterior. (Debe declararse antes
 // de la llamada a init(): las const de módulo no se izan.)
 const tabScrollPositions = {};
+// Estado del editor-portal (declarado antes de init() para evitar TDZ).
+let editorSearchTimer = null;
+let editorPortal = null;
 // Categorías simples para filtros y reparto de capital.
 const STABLE_SYMBOLS = new Set([
   "USDT", "USDC", "DAI", "TUSD", "BUSD", "FDUSD", "USDE", "PYUSD",
@@ -137,17 +140,14 @@ const TOGGLEABLE_COLUMNS = ["priority", "targets", "tpSignal"];
 const TRIAD_FIELDS = ["investment", "tokens", "entryPrice"];
 // Opciones del selector de orden (móvil y escritorio). Incluye claves que
 // no tienen columna propia: variación 24h, capitalización, ranking y TP.
+// Selector de orden único y limpio (sin filtros por categoría).
 const SORT_OPTIONS = [
+  { key: "marketCap", labelKey: "sort.marketCap" },
   { key: "currentValue", labelKey: "sort.positionValue" },
   { key: "pnlPct", labelKey: "sort.pnl" },
   { key: "change24h", labelKey: "sort.change24h" },
-  { key: "marketCap", labelKey: "sort.marketCap" },
-  { key: "marketCapRank", labelKey: "sort.rank" },
-  { key: "asset", labelKey: "sort.name" },
-  { key: "nextTp", labelKey: "sort.nextTp" },
   { key: "investment", labelKey: "sort.invested" },
-  { key: "favorite", labelKey: "sort.priority" },
-  { key: "tpSignal", labelKey: "sort.tpSignal" }
+  { key: "asset", labelKey: "sort.name" }
 ];
 const THEME_COLORS = { dark: "#050d14", light: "#f0f4f8" };
 
@@ -203,55 +203,14 @@ const DEFAULT_ROWS = [
   }
 ];
 
+// Tabla simplificada de solo lectura: la edición vive en el editor-portal.
 const TABLE_COLUMNS = [
-  {
-    key: "priority",
-    labelKey: "table.columns.priority",
-    tooltipKey: "table.tooltips.priority",
-    sortKey: "favorite"
-  },
-  {
-    key: "asset",
-    labelKey: "table.columns.asset",
-    tooltipKey: "table.tooltips.asset",
-    sortKey: "asset"
-  },
-  {
-    key: "position",
-    labelKey: "table.columns.position",
-    tooltipKey: "table.tooltips.position",
-    sortKey: "investment"
-  },
-  {
-    key: "market",
-    labelKey: "table.columns.market",
-    tooltipKey: "table.tooltips.market",
-    sortKey: "currentValue"
-  },
-  {
-    key: "performance",
-    labelKey: "table.columns.performance",
-    tooltipKey: "table.tooltips.performance",
-    sortKey: "pnlPct"
-  },
-  {
-    key: "targets",
-    labelKey: "table.columns.targets",
-    tooltipKey: "table.tooltips.targets",
-    sortKey: "tp3"
-  },
-  {
-    key: "tpSignal",
-    labelKey: "table.columns.tpSignal",
-    tooltipKey: "table.tooltips.tpSignal",
-    sortKey: "tpSignal"
-  },
-  {
-    key: "actions",
-    labelKey: "table.columns.actions",
-    tooltipKey: "table.tooltips.actions",
-    sortKey: null
-  }
+  { key: "asset", labelKey: "table.columns.asset", sortKey: "asset" },
+  { key: "price", labelKey: "table.columns.priceCol", sortKey: "currentPrice" },
+  { key: "invested", labelKey: "table.columns.invested", sortKey: "investment" },
+  { key: "value", labelKey: "table.columns.value", sortKey: "currentValue" },
+  { key: "pnl", labelKey: "table.columns.performance", sortKey: "pnlPct" },
+  { key: "actions", labelKey: "table.columns.actions", sortKey: null }
 ];
 
 const state = {
@@ -280,8 +239,9 @@ const state = {
   refreshRequestId: 0,
   currencySwitchId: 0,
   filterQuery: "",
-  quickFilter: "all",
   heroVisible: true,
+  editorRowId: null,
+  rowMenuOpen: false,
   lastRefreshAt: 0,
   market: {
     btc: null,
@@ -530,7 +490,6 @@ function init() {
   applyTheme();
   bindEvents();
   bindEnvironmentEvents();
-  syncColumnToggleButtons();
   applyBalanceVisibility();
   renderAll();
   setActiveTab(state.prefs.activeTab);
@@ -629,29 +588,6 @@ function detectIosInstallCard() {
   if (isIOS && !isStandalone) {
     dom.installCard.hidden = false;
   }
-}
-
-// ── Bottom sheet de posiciones (móvil) ──
-function syncSheetBackdrop() {
-  const open = isMobileViewport() && state.rows.some((row) => row.detailsOpen);
-  if (dom.sheetBackdrop) {
-    dom.sheetBackdrop.hidden = !open;
-  }
-  document.body.classList.toggle("sheet-open", open);
-}
-
-function closeAllSheets() {
-  let hadOpen = false;
-  state.rows.forEach((row) => {
-    if (row.detailsOpen) {
-      row.detailsOpen = false;
-      hadOpen = true;
-    }
-  });
-  if (hadOpen && isMobileViewport()) {
-    renderTableBody();
-  }
-  syncSheetBackdrop();
 }
 
 // ── Compartir resumen ──
@@ -808,44 +744,13 @@ function bindEvents() {
   });
 
   dom.tableHead.addEventListener("click", handleHeaderClick);
-  dom.tableBody.addEventListener("input", handleTableInput);
-  dom.tableBody.addEventListener("blur", handleTableBlur, true);
-  dom.tableBody.addEventListener("focusin", handleTableFocusIn);
   dom.tableBody.addEventListener("keydown", handleTableKeyDown);
-  dom.tableBody.addEventListener("mousedown", handleTableMouseDown);
   dom.tableBody.addEventListener("click", handleTableClick);
-
-  document.addEventListener("click", (event) => {
-    if (!event.target.closest("[data-row-id]")) {
-      closeAllSuggestions();
-    }
-  });
+  bindPositionEditor();
 
   document.querySelectorAll("[data-copy-wallet]").forEach((button) => {
     button.addEventListener("click", () => copyWalletAddress(button));
   });
-
-  if (dom.positionFilterInput) {
-    dom.positionFilterInput.addEventListener("input", (event) => {
-      state.filterQuery = event.target.value;
-      applyPositionFilter();
-    });
-  }
-
-  const quickFilters = document.getElementById("quickFilters");
-  if (quickFilters) {
-    quickFilters.addEventListener("click", (event) => {
-      const chip = event.target.closest("[data-quick-filter]");
-      if (!chip) {
-        return;
-      }
-      state.quickFilter = chip.dataset.quickFilter;
-      quickFilters.querySelectorAll(".qf-chip").forEach((node) => {
-        node.classList.toggle("is-active", node === chip);
-      });
-      applyPositionFilter();
-    });
-  }
 
   const moreRefreshBtn = document.getElementById("moreRefreshBtn");
   if (moreRefreshBtn) {
@@ -897,39 +802,14 @@ function bindEvents() {
     dom.shareSummaryBtn.addEventListener("click", handleShareSummary);
   }
 
-  if (dom.sheetBackdrop) {
-    dom.sheetBackdrop.addEventListener("click", closeAllSheets);
-  }
-
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
-      closeAllSheets();
-    }
-  });
-
-  const columnToggles = document.getElementById("columnToggles");
-  if (columnToggles) {
-    columnToggles.addEventListener("click", (event) => {
-      const btn = event.target.closest("[data-col-toggle]");
-      if (!btn) return;
-      const col = btn.dataset.colToggle;
-      if (state.hiddenColumns.has(col)) {
-        state.hiddenColumns.delete(col);
-        btn.classList.add("is-active");
-      } else {
-        state.hiddenColumns.add(col);
-        btn.classList.remove("is-active");
+      if (state.rowMenuOpen) {
+        closeRowMenu();
+      } else if (state.editorRowId) {
+        closePositionEditor();
       }
-      state.prefs.hiddenColumns = [...state.hiddenColumns];
-      savePreferences();
-      applyColumnVisibility();
-    });
-  }
-}
-
-function syncColumnToggleButtons() {
-  document.querySelectorAll("[data-col-toggle]").forEach((btn) => {
-    btn.classList.toggle("is-active", !state.hiddenColumns.has(btn.dataset.colToggle));
+    }
   });
 }
 
@@ -963,10 +843,6 @@ function loadState() {
   state.prefs.activeTab = APP_TABS.includes(state.prefs.activeTab) ? state.prefs.activeTab : "home";
   state.prefs.portfolioName = sanitizePortfolioNameInput(state.prefs.portfolioName);
   state.prefs.chartRange = resolveChartRange(state.prefs.chartRange);
-  state.prefs.hiddenColumns = Array.isArray(state.prefs.hiddenColumns)
-    ? state.prefs.hiddenColumns.filter((column) => TOGGLEABLE_COLUMNS.includes(column))
-    : [];
-  state.hiddenColumns = new Set(state.prefs.hiddenColumns);
 
   dom.currencySelect.value = state.prefs.currency;
   dom.autoRefreshSelect.value = String(state.prefs.autoRefreshSec);
@@ -1124,7 +1000,9 @@ function createRow(partial = {}) {
     marketCap: Number.isFinite(partial.marketCap) ? partial.marketCap : null,
     marketCapRank: Number.isFinite(partial.marketCapRank) ? partial.marketCapRank : null,
     marketCapUpdatedAt: partial.marketCapUpdatedAt || null,
-    detailsOpen: false,
+    note: String(partial.note || ""),
+    purchaseDate: String(partial.purchaseDate || ""),
+    personalLabel: String(partial.personalLabel || ""),
     suggestions: [],
     suggestionsOpen: false,
     lookupNonce: 0,
@@ -1175,26 +1053,12 @@ function renderDashboardOnly() {
   renderStatusCards();
 }
 
-function applyColumnVisibility() {
-  const table = dom.tableBody?.closest("table");
-  if (!table) return;
-  const colMap = { priority: 1, targets: 6, tpSignal: 7 };
-
-  Object.entries(colMap).forEach(([colKey, colIndex]) => {
-    const hidden = state.hiddenColumns.has(colKey);
-    table.querySelectorAll(`th:nth-child(${colIndex}), td:nth-child(${colIndex})`).forEach(el => {
-      el.style.display = hidden ? "none" : "";
-    });
-  });
-}
-
 function renderTableHead() {
   dom.tableHead.innerHTML = `
     <tr>
       ${TABLE_COLUMNS.map((column) => renderHeaderCell(column)).join("")}
     </tr>
   `;
-  applyColumnVisibility();
   renderMobileSortControl();
 }
 
@@ -1232,17 +1096,15 @@ function renderHeaderCell(column) {
   const isActive = state.prefs.sortBy === column.sortKey;
   const arrow = !isActive ? "" : state.prefs.sortDir === "desc" ? "&darr;" : "&uarr;";
   const label = t(column.labelKey);
-  const tooltip = t(column.tooltipKey);
 
   return `
-    <th scope="col">
+    <th scope="col" class="col-${column.key}">
       <div class="th-shell">
         ${isSortable
           ? `<button class="th-sort-btn ${isActive ? "is-active" : ""}" type="button" data-sort-key="${column.sortKey}">
               ${escapeHtml(label)} ${arrow}
             </button>`
           : `<span class="th-button">${escapeHtml(label)}</span>`}
-        <span class="tooltip-dot" tabindex="0" data-tooltip="${escapeHtml(tooltip)}">i</span>
       </div>
     </th>
   `;
@@ -1250,275 +1112,131 @@ function renderHeaderCell(column) {
 
 function renderTableBody() {
   const rows = getSortedRows();
+  const totalValue = state.rows.reduce((sum, row) => {
+    const value = computeRowMetrics(row).currentValue;
+    return sum + (value > 0 ? value : 0);
+  }, 0);
 
-  dom.tableBody.innerHTML = rows.map((row) => renderRow(row)).join("");
+  const meaningful = rows.filter((row) => {
+    const metrics = computeRowMetrics(row);
+    return row.crypto.trim() || metrics.investment > 0 || metrics.currentValue > 0;
+  });
 
-  if (!rows.length) {
+  if (!meaningful.length) {
     dom.tableBody.innerHTML = `
       <tr>
         <td colspan="${TABLE_COLUMNS.length}">
-          <div class="empty-state">${escapeHtml(t("table.empty"))}</div>
+          <div class="empty-state empty-positions">
+            <strong>${escapeHtml(t("table.emptyTitle"))}</strong>
+            <p>${escapeHtml(t("table.emptyText"))}</p>
+            <button class="primary-btn" type="button" data-action="empty-add">${escapeHtml(t("buttons.newPosition"))}</button>
+          </div>
         </td>
       </tr>
     `;
+    applyPositionFilter();
+    return;
   }
-  applyColumnVisibility();
+
+  dom.tableBody.innerHTML = rows.map((row) => renderRow(row, totalValue)).join("");
   applyPositionFilter();
 }
 
-// Filtro de posiciones (texto + filtros rápidos). Solo oculta/muestra
-// filas ya renderizadas: no re-renderiza ni toca el estado de los datos.
-function rowMatchesQuickFilter(row) {
-  const filter = state.quickFilter || "all";
-  if (filter === "all") {
-    return true;
-  }
-  if (filter === "favorites") {
-    return Boolean(row.favorite);
-  }
-  if (filter === "gaining" || filter === "losing") {
-    const metrics = computeRowMetrics(row);
-    return filter === "gaining" ? metrics.pnlUsd > 0 : metrics.pnlUsd < 0;
-  }
-  return getAssetCategory(row) === filter;
-}
-
+// Filtro por texto opcional (se conserva la utilidad, sin chips de categoría).
 function applyPositionFilter() {
   const query = normalizeSearchText(state.filterQuery || "");
+  if (!query) {
+    return;
+  }
   dom.tableBody.querySelectorAll("tr[data-row-id]").forEach((tr) => {
     const row = getRowById(tr.dataset.rowId);
-    const matchesQuery = !query || [row?.crypto, row?.resolvedName, row?.symbol, row?.coinId]
+    const match = row && [row.crypto, row.resolvedName, row.symbol, row.coinId]
       .some((value) => normalizeSearchText(String(value || "")).includes(query));
-    const match = matchesQuery && row && rowMatchesQuickFilter(row);
     tr.style.display = match ? "" : "none";
   });
 }
 
-function renderRow(row) {
+// Fila de solo lectura: toda la edición ocurre en el editor-portal.
+function renderRow(row, totalValue = 0) {
   const metrics = computeRowMetrics(row);
-  const validation = getValidationMessage(metrics);
-  const tpStatus = getTpStatus(metrics);
   const rowTone = metrics.pnlUsd > 0 ? "row-profit" : metrics.pnlUsd < 0 ? "row-loss" : "";
-  const rowPinned = row.pinned ? "row-pinned" : "";
+  const weight = totalValue > 0 && metrics.currentValue > 0
+    ? (metrics.currentValue / totalValue) * 100
+    : null;
+  const changeText = Number.isFinite(row.priceChange24h) ? formatSignedPercent(row.priceChange24h) : "--";
+  const priceText = metrics.currentPrice > 0
+    ? formatCurrency(metrics.currentPrice, getPriceDigits(metrics.currentPrice))
+    : "--";
+  const stale = isStaleQuote(row);
 
   return `
-    <tr class="portfolio-row ${rowTone} ${rowPinned} ${row.detailsOpen ? "is-expanded" : ""}" data-row-id="${row.id}">
-      <td class="priority-cell" data-label="${escapeHtml(t("table.columns.priority"))}">
-        <div class="flag-stack">
-          <button
-            class="flag-btn ${row.favorite ? "is-active" : ""}"
-            type="button"
-            data-action="toggle-favorite"
-            data-row-id="${row.id}"
-            aria-pressed="${row.favorite ? "true" : "false"}"
-          >
-            ${row.favorite ? t("buttons.favOn") : t("buttons.favOff")}
-          </button>
-          <button
-            class="flag-btn web-btn ${row.coinId ? "is-active" : ""}"
-            type="button"
-            data-action="open-web"
-            data-row-id="${row.id}"
-            ${!row.coinId ? "disabled" : ""}
-            title="${row.coinId ? "CoinGecko: " + escapeHtml(row.coinId) : ""}"
-          >
-            ${t("buttons.webLink")}
-          </button>
-        </div>
-      </td>
-
-      <td class="asset-cell" data-label="${escapeHtml(t("table.columns.asset"))}">
+    <tr class="portfolio-row ${rowTone} ${row.favorite ? "is-fav" : ""}" data-row-id="${row.id}" tabindex="0" role="button" aria-label="${escapeHtml(t("buttons.edit"))} ${escapeHtml(assetDisplayName(row))}">
+      <td class="asset-cell col-asset" data-label="${escapeHtml(t("table.columns.asset"))}">
         <div class="asset-field">
           <div class="asset-avatar" data-role="assetAvatar">${renderAssetAvatar(row)}</div>
-          <div class="field-stack">
-            <input
-              class="table-input asset-input"
-              type="text"
-              autocomplete="off"
-              placeholder="${escapeHtml(t("row.assetPlaceholder"))}"
-              aria-label="${escapeHtml(t("table.columns.asset"))}"
-              data-row-id="${row.id}"
-              data-field="crypto"
-              value="${escapeHtml(row.crypto)}"
-            />
-            <div class="asset-meta">
-              <span class="rank-badge" data-role="rankBadge" ${Number.isFinite(row.marketCapRank) ? "" : "hidden"}>#${Number.isFinite(row.marketCapRank) ? row.marketCapRank : ""}</span>
-              <span class="cat-badge cat-${getAssetCategory(row)}">${escapeHtml(getAssetCategory(row).toUpperCase())}</span>
-              <span class="lookup-meta ${lookupToneClass(row)}" data-role="lookupMeta">
-                ${renderLookupMeta(row)}
-              </span>
-              <span class="validation-meta ${validation.tone}" data-role="validationMeta">
-                ${escapeHtml(validation.text)}
-              </span>
-            </div>
+          <div class="asset-id">
+            <strong data-role="assetName">${escapeHtml(assetDisplayName(row))}</strong>
+            <small data-role="assetSub">${escapeHtml(row.resolvedName && row.symbol ? row.resolvedName : t("row.noAsset"))}</small>
           </div>
-          <div class="suggestions ${row.suggestionsOpen && row.suggestions.length ? "" : "hidden"}" data-role="suggestions">
-            ${renderSuggestions(row)}
-          </div>
+          ${row.favorite ? '<span class="fav-dot" aria-hidden="true">★</span>' : ""}
         </div>
       </td>
 
-      <td class="position-cell" data-label="${escapeHtml(t("table.columns.position"))}">
-        <div class="compact-grid">
-          <label class="mini-field">
-            <span>${escapeHtml(t("table.fields.investment"))}</span>
-            <input
-              class="table-input numeric-input"
-              type="text"
-              inputmode="decimal"
-              data-row-id="${row.id}"
-              data-field="investment"
-              value="${escapeHtml(row.investment)}"
-              placeholder="0.00"
-            />
-          </label>
-          <label class="mini-field">
-            <span>${escapeHtml(t("table.fields.tokens"))}</span>
-            <input
-              class="table-input numeric-input"
-              type="text"
-              inputmode="decimal"
-              data-row-id="${row.id}"
-              data-field="tokens"
-              value="${escapeHtml(row.tokens)}"
-              placeholder="0.00"
-            />
-          </label>
-          <label class="mini-field">
-            <span>${escapeHtml(t("table.fields.entry"))}</span>
-            <input
-              class="table-input numeric-input"
-              type="text"
-              inputmode="decimal"
-              data-row-id="${row.id}"
-              data-field="entryPrice"
-              value="${escapeHtml(getEntryDisplayValue(row, metrics))}"
-              placeholder="${escapeHtml(t("table.fields.entryAuto"))}"
-            />
-          </label>
-        </div>
-        <div class="validation-meta info" data-role="entryMeta">
-          ${escapeHtml(getAutoFieldLabel(row, metrics))}
+      <td class="price-col col-price" data-label="${escapeHtml(t("table.columns.priceCol"))}">
+        <div class="stack-cell">
+          <strong class="money" data-role="rowPrice">${priceText}</strong>
+          <span class="numeric ${toneClass(row.priceChange24h || 0)}" data-role="rowChange">${changeText}<small> 24h</small></span>
+          <span class="quote-time ${stale ? "is-stale" : ""}" data-role="rowQuote">${escapeHtml(quoteTimeLabel(row))}</span>
         </div>
       </td>
 
-      <td class="market-cell" data-label="${escapeHtml(t("table.columns.market"))}">
-        <div class="market-metrics">
-          <div data-role="priceCell">${renderPriceCell(row)}</div>
-          <strong class="money" data-role="currentValue">${formatCurrency(metrics.currentValue)}</strong>
-          <span class="cap-subline" data-role="capLine">${escapeHtml(formatCapLine(row))}</span>
+      <td class="invested-col col-invested" data-label="${escapeHtml(t("table.columns.invested"))}">
+        <strong class="money" data-role="rowInvested">${maskedCurrency(metrics.investment)}</strong>
+      </td>
+
+      <td class="value-col col-value" data-label="${escapeHtml(t("table.columns.value"))}">
+        <div class="stack-cell">
+          <strong class="money" data-role="rowValue">${maskedCurrency(metrics.currentValue)}</strong>
+          <span class="weight-chip" data-role="rowWeight">${weight != null ? weight.toFixed(1) + "%" : "--"}</span>
         </div>
       </td>
 
-      <td class="performance-cell" data-label="${escapeHtml(t("table.columns.performance"))}">
-        <div class="performance-metrics">
-          <strong class="money ${toneClass(metrics.pnlUsd)}" data-role="pnlUsd">${formatSignedCurrency(metrics.pnlUsd)}</strong>
-          <span class="numeric ${toneClass(metrics.pnlPct)}" data-role="pnlPct">${formatPercent(metrics.pnlPct)}</span>
-          <span class="numeric ${toneClass(metrics.roiPct)}" data-role="roiPct">${escapeHtml(t("row.roi", { value: formatPercent(metrics.roiPct) }))}</span>
+      <td class="pnl-col col-pnl" data-label="${escapeHtml(t("table.columns.performance"))}">
+        <div class="stack-cell">
+          <strong class="money ${toneClass(metrics.pnlUsd)}" data-role="rowPnlAbs">${maskedSignedCurrency(metrics.pnlUsd)}</strong>
+          <span class="numeric ${toneClass(metrics.pnlPct)}" data-role="rowPnlPct">${formatPercent(metrics.pnlPct)}</span>
         </div>
       </td>
 
-      <td class="targets-cell" data-label="${escapeHtml(t("table.columns.targets"))}">
-        <div class="tp-grid">
-          <label class="mini-field">
-            <span>TP1</span>
-            <input
-              class="table-input numeric-input"
-              type="text"
-              inputmode="decimal"
-              data-row-id="${row.id}"
-              data-field="tp1"
-              value="${escapeHtml(row.tp1)}"
-              placeholder="0.00"
-            />
-          </label>
-          <label class="mini-field">
-            <span>TP2</span>
-            <input
-              class="table-input numeric-input"
-              type="text"
-              inputmode="decimal"
-              data-row-id="${row.id}"
-              data-field="tp2"
-              value="${escapeHtml(row.tp2)}"
-              placeholder="0.00"
-            />
-          </label>
-          <label class="mini-field">
-            <span>TP3</span>
-            <input
-              class="table-input numeric-input"
-              type="text"
-              inputmode="decimal"
-              data-row-id="${row.id}"
-              data-field="tp3"
-              value="${escapeHtml(row.tp3)}"
-              placeholder="0.00"
-            />
-          </label>
+      <td class="actions-cell col-actions" data-label="${escapeHtml(t("table.columns.actions"))}">
+        <div class="row-actions">
+          <button class="icon-btn edit-btn" type="button" data-action="edit-row" data-row-id="${row.id}">${escapeHtml(t("buttons.edit"))}</button>
+          <button class="icon-btn ghost-icon" type="button" data-action="row-menu" data-row-id="${row.id}" aria-label="${escapeHtml(t("buttons.moreActions"))}" aria-haspopup="menu">⋯</button>
         </div>
-      </td>
-
-      <td class="signal-cell" data-role="tpSignal" data-label="${escapeHtml(t("table.columns.tpSignal"))}">${renderTpSignal(tpStatus)}</td>
-
-      <td class="actions-cell" data-label="${escapeHtml(t("table.columns.actions"))}">
-        <div class="action-stack">
-          <button class="icon-btn" type="button" data-action="refresh-row" data-row-id="${row.id}">
-            ${escapeHtml(t("buttons.refresh"))}
-          </button>
-          <button class="icon-btn" type="button" data-action="delete-row" data-row-id="${row.id}">
-            ${escapeHtml(t("buttons.delete"))}
-          </button>
-        </div>
-      </td>
-
-      <td class="card-summary-cell">
-        <div class="card-summary-grid">
-          <div class="cs-item">
-            <span>${escapeHtml(t("card.value"))}</span>
-            <strong class="money" data-role="csValue">${formatCurrency(metrics.currentValue)}</strong>
-          </div>
-          <div class="cs-item cs-right">
-            <span>${escapeHtml(t("card.pnl"))}</span>
-            <strong class="money ${toneClass(metrics.pnlUsd)}" data-role="csPnl">${formatSignedCurrency(metrics.pnlUsd)} (${formatPercent(metrics.pnlPct)})</strong>
-          </div>
-          <div class="cs-item">
-            <span>${escapeHtml(t("card.price"))}</span>
-            <strong class="money" data-role="csPrice">${metrics.currentPrice > 0 ? formatCurrency(metrics.currentPrice, getPriceDigits(metrics.currentPrice)) : "--"}</strong>
-          </div>
-          <div class="cs-item cs-right">
-            <span>${escapeHtml(t("card.change24h"))}</span>
-            <strong class="${toneClass(row.priceChange24h || 0)}" data-role="csChange">${Number.isFinite(row.priceChange24h) ? formatSignedPercent(row.priceChange24h) : "--"}</strong>
-          </div>
-          <div class="cs-item">
-            <span>${escapeHtml(t("card.invested"))}</span>
-            <strong class="money" data-role="csInvestment">${formatCurrency(metrics.investment)}</strong>
-          </div>
-          <div class="cs-item cs-right">
-            <span>${escapeHtml(t("card.cap"))}</span>
-            <strong data-role="csCap">${escapeHtml(Number.isFinite(row.marketCap) ? formatCompactCurrency(row.marketCap) : "--")}</strong>
-          </div>
-          <div class="cs-item cs-tp">
-            <span>${escapeHtml(t("card.nextTp"))}</span>
-            <strong class="${tpStatus.tone}" data-role="csTp">${escapeHtml(getNextTpSummary(metrics, tpStatus))}</strong>
-            <span class="tp-progress" aria-hidden="true"><span data-role="csTpBar" style="width:${getTpProgressPct(metrics) ?? 0}%"></span></span>
-          </div>
-        </div>
-      </td>
-
-      <td class="card-toggle-cell">
-        <button
-          class="details-toggle-btn"
-          type="button"
-          data-action="toggle-details"
-          data-row-id="${row.id}"
-          aria-expanded="${row.detailsOpen ? "true" : "false"}"
-        >
-          ${escapeHtml(row.detailsOpen ? t("row.hideDetails") : t("row.showDetails"))}
-        </button>
       </td>
     </tr>
   `;
+}
+
+// Un precio se considera desactualizado si su última cotización tiene más de
+// 2× el intervalo de autorefresh (mínimo 15 min).
+function isStaleQuote(row) {
+  if (!row.lastPriceAt || !(row.currentPrice > 0)) {
+    return false;
+  }
+  const age = Date.now() - new Date(row.lastPriceAt).getTime();
+  const threshold = Math.max(15 * 60 * 1000, (state.prefs.autoRefreshSec || 1800) * 1000 * 2);
+  return age > threshold;
+}
+
+function quoteTimeLabel(row) {
+  if (!(row.currentPrice > 0)) {
+    return t("row.noPrice");
+  }
+  if (!row.lastPriceAt) {
+    return "CoinGecko";
+  }
+  return t("row.sync", { time: formatRelativeTime(new Date(row.lastPriceAt).getTime()) });
 }
 
 // ── Ocultar saldo (icono de ojo en Inicio) ──
@@ -2284,34 +2002,61 @@ function updateStickyBarVisibility() {
 }
 
 function renderTotalsRow(snapshot) {
+  renderCarteraSummary(snapshot);
+
   const totalPnl = snapshot.totals.currentValue - snapshot.totals.investment;
   const totalPnlPct = snapshot.totals.investment
     ? (totalPnl / snapshot.totals.investment) * 100
     : 0;
 
+  // Fila de totales alineada con las 6 columnas de solo lectura.
   dom.totalsFoot.innerHTML = `
     <tr class="totals-row">
-      <td class="totals-label-cell">${escapeHtml(t("table.totals"))}</td>
-      <td class="totals-inline-cell">${escapeHtml(t("table.assets", { count: snapshot.items.length }))}</td>
-      <td class="totals-inline-cell" data-label="${escapeHtml(t("summary.totalInvested"))}">
-        <span class="money">${formatCurrency(snapshot.totals.investment)}</span>
-        <span class="totals-inline-meta">${escapeHtml(t("table.tokens", { count: formatNumber(snapshot.totals.tokens, 6) }))}</span>
-      </td>
-      <td class="totals-inline-cell money" data-label="${escapeHtml(t("summary.totalValue"))}">${formatCurrency(snapshot.totals.currentValue)}</td>
-      <td class="totals-inline-cell" data-label="${escapeHtml(t("summary.gainLoss"))}">
-        <span class="money ${toneClass(totalPnl)}">${formatSignedCurrency(totalPnl)}</span>
+      <td class="totals-label-cell col-asset">${escapeHtml(t("table.totals"))}</td>
+      <td class="col-price"></td>
+      <td class="totals-inline-cell money col-invested" data-label="${escapeHtml(t("summary.totalInvested"))}">${maskedCurrency(snapshot.totals.investment)}</td>
+      <td class="totals-inline-cell money col-value" data-label="${escapeHtml(t("summary.totalValue"))}">${maskedCurrency(snapshot.totals.currentValue)}</td>
+      <td class="totals-inline-cell col-pnl" data-label="${escapeHtml(t("summary.gainLoss"))}">
+        <span class="money ${toneClass(totalPnl)}">${maskedSignedCurrency(totalPnl)}</span>
         <span class="totals-inline-meta ${toneClass(totalPnlPct)}">${formatPercent(totalPnlPct)}</span>
       </td>
-      <td class="totals-tp-cell">
-        <div class="totals-tp-inline">
-          <span class="totals-tp-chip"><strong>TP1</strong> <span class="money">${formatCurrency(snapshot.totals.tp1)}</span></span>
-          <span class="totals-tp-chip"><strong>TP2</strong> <span class="money">${formatCurrency(snapshot.totals.tp2)}</span></span>
-          <span class="totals-tp-chip"><strong>TP3</strong> <span class="money">${formatCurrency(snapshot.totals.tp3)}</span></span>
-        </div>
-      </td>
-      <td class="totals-inline-cell">${escapeHtml(t("table.favorites", { count: snapshot.favoriteCount }))}</td>
-      <td class="totals-inline-cell">${escapeHtml(t("table.liveTp", { live: snapshot.connectedCount, tp: snapshot.reachedTargets }))}</td>
+      <td class="col-actions"></td>
     </tr>
+  `;
+}
+
+// Tarjeta superior de Cartera: nº posiciones, valor, PnL total y 24h.
+function renderCarteraSummary(snapshot) {
+  const el = document.getElementById("carteraSummary");
+  if (!el) {
+    return;
+  }
+  const totalPnl = snapshot.totals.currentValue - snapshot.totals.investment;
+  const totalPnlPct = snapshot.totals.investment ? (totalPnl / snapshot.totals.investment) * 100 : 0;
+  const change = getPortfolio24hChange(snapshot);
+  const count = snapshot.items.filter(
+    (item) => item.metrics.investment > 0 || item.metrics.currentValue > 0 || item.row.crypto.trim()
+  ).length;
+  const stale = state.lastRefreshAt
+    ? t("home.updatedAgo", { time: formatRelativeTime(state.lastRefreshAt) })
+    : t("status.noSyncYet");
+
+  el.innerHTML = `
+    <div class="cartera-sum-main">
+      <div>
+        <span class="cartera-sum-label">${escapeHtml(t("home.totalValue"))}</span>
+        <strong class="cartera-sum-value">${maskedCurrency(snapshot.totals.currentValue)}</strong>
+      </div>
+      <div class="cartera-sum-pnl ${toneClass(totalPnl)}">
+        <strong>${maskedSignedCurrency(totalPnl)}</strong>
+        <span>${formatPercent(totalPnlPct)}</span>
+      </div>
+    </div>
+    <div class="cartera-sum-meta">
+      <span>${escapeHtml(t("cartera.positions", { count }))}</span>
+      <span class="${change ? toneClass(change.pct) : ""}">${escapeHtml(t("summary.change24h"))}: ${change ? formatSignedPercent(change.pct) : "--"}</span>
+      <span class="cartera-sum-updated">${escapeHtml(stale)}</span>
+    </div>
   `;
 }
 
@@ -2414,18 +2159,30 @@ function handleChartRangeClick(event) {
   updateSaveMessage(t("charts.rangeUpdated"));
 }
 
+// Actualización selectiva de una fila (sin re-render): mantiene el foco y no
+// pisa lo que el usuario escribe en el editor.
 function updateLiveRowUi(rowId) {
   const row = getRowById(rowId);
   const rowElement = dom.tableBody.querySelector(`tr[data-row-id="${rowId}"]`);
 
+  // El editor abierto siempre refleja los datos frescos (precio, cap, etc.).
+  if (state.editorRowId === rowId) {
+    refreshEditorLiveData();
+  }
+
   if (!row || !rowElement) {
-    renderAll();
+    scheduleDashboardRefresh();
     return;
   }
 
   const metrics = computeRowMetrics(row);
-  const validation = getValidationMessage(metrics);
-  const tpStatus = getTpStatus(metrics);
+  const totalValue = state.rows.reduce((sum, item) => {
+    const value = computeRowMetrics(item).currentValue;
+    return sum + (value > 0 ? value : 0);
+  }, 0);
+  const weight = totalValue > 0 && metrics.currentValue > 0
+    ? (metrics.currentValue / totalValue) * 100
+    : null;
 
   const setRole = (role, apply) => {
     const node = rowElement.querySelector(`[data-role='${role}']`);
@@ -2434,84 +2191,36 @@ function updateLiveRowUi(rowId) {
     }
   };
 
-  rowElement.className = `portfolio-row ${metrics.pnlUsd > 0 ? "row-profit" : metrics.pnlUsd < 0 ? "row-loss" : ""} ${row.pinned ? "row-pinned" : ""} ${row.detailsOpen ? "is-expanded" : ""}`;
+  rowElement.className = `portfolio-row ${metrics.pnlUsd > 0 ? "row-profit" : metrics.pnlUsd < 0 ? "row-loss" : ""} ${row.favorite ? "is-fav" : ""}`;
   setRole("assetAvatar", (node) => { node.innerHTML = renderAssetAvatar(row); });
-  setRole("lookupMeta", (node) => {
-    node.className = `lookup-meta ${lookupToneClass(row)}`;
-    node.innerHTML = renderLookupMeta(row);
+  setRole("assetName", (node) => { node.textContent = assetDisplayName(row); });
+  setRole("assetSub", (node) => {
+    node.textContent = row.resolvedName && row.symbol ? row.resolvedName : t("row.noAsset");
   });
-  setRole("validationMeta", (node) => {
-    node.className = `validation-meta ${validation.tone}`;
-    node.textContent = validation.text;
-  });
-  setRole("entryMeta", (node) => { node.textContent = getAutoFieldLabel(row, metrics); });
-  const entryInput = rowElement.querySelector("input[data-field='entryPrice']");
-  if (entryInput && document.activeElement !== entryInput) {
-    entryInput.value = getEntryDisplayValue(row, metrics);
-  }
-  setRole("priceCell", (node) => { node.innerHTML = renderPriceCell(row); });
-  setRole("currentValue", (node) => { node.textContent = formatCurrency(metrics.currentValue); });
-  setRole("pnlUsd", (node) => {
-    node.textContent = formatSignedCurrency(metrics.pnlUsd);
-    node.className = `money ${toneClass(metrics.pnlUsd)}`;
-  });
-  setRole("pnlPct", (node) => {
-    node.textContent = formatPercent(metrics.pnlPct);
-    node.className = `numeric ${toneClass(metrics.pnlPct)}`;
-  });
-  setRole("roiPct", (node) => {
-    node.textContent = t("row.roi", { value: formatPercent(metrics.roiPct) });
-    node.className = `numeric ${toneClass(metrics.roiPct)}`;
-  });
-  setRole("tpSignal", (node) => { node.innerHTML = renderTpSignal(tpStatus); });
-  setRole("csValue", (node) => { node.textContent = formatCurrency(metrics.currentValue); });
-  setRole("csPrice", (node) => {
+  setRole("rowPrice", (node) => {
     node.textContent = metrics.currentPrice > 0
       ? formatCurrency(metrics.currentPrice, getPriceDigits(metrics.currentPrice))
       : "--";
   });
-  setRole("csInvestment", (node) => { node.textContent = formatCurrency(metrics.investment); });
-  setRole("csPnl", (node) => {
-    node.textContent = `${formatSignedCurrency(metrics.pnlUsd)} (${formatPercent(metrics.pnlPct)})`;
+  setRole("rowChange", (node) => {
+    node.innerHTML = `${Number.isFinite(row.priceChange24h) ? formatSignedPercent(row.priceChange24h) : "--"}<small> 24h</small>`;
+    node.className = `numeric ${toneClass(row.priceChange24h || 0)}`;
+  });
+  setRole("rowQuote", (node) => {
+    node.textContent = quoteTimeLabel(row);
+    node.classList.toggle("is-stale", isStaleQuote(row));
+  });
+  setRole("rowInvested", (node) => { node.textContent = maskedCurrency(metrics.investment); });
+  setRole("rowValue", (node) => { node.textContent = maskedCurrency(metrics.currentValue); });
+  setRole("rowWeight", (node) => { node.textContent = weight != null ? `${weight.toFixed(1)}%` : "--"; });
+  setRole("rowPnlAbs", (node) => {
+    node.textContent = maskedSignedCurrency(metrics.pnlUsd);
     node.className = `money ${toneClass(metrics.pnlUsd)}`;
   });
-  setRole("csTp", (node) => {
-    node.textContent = getNextTpSummary(metrics, tpStatus);
-    node.className = tpStatus.tone;
+  setRole("rowPnlPct", (node) => {
+    node.textContent = formatPercent(metrics.pnlPct);
+    node.className = `numeric ${toneClass(metrics.pnlPct)}`;
   });
-  setRole("csChange", (node) => {
-    node.textContent = Number.isFinite(row.priceChange24h) ? formatSignedPercent(row.priceChange24h) : "--";
-    node.className = toneClass(row.priceChange24h || 0);
-  });
-  setRole("csCap", (node) => {
-    node.textContent = Number.isFinite(row.marketCap) ? formatCompactCurrency(row.marketCap) : "--";
-  });
-  setRole("csTpBar", (node) => {
-    node.style.width = `${getTpProgressPct(metrics) ?? 0}%`;
-  });
-  setRole("capLine", (node) => {
-    node.textContent = formatCapLine(row);
-  });
-  setRole("rankBadge", (node) => {
-    if (Number.isFinite(row.marketCapRank)) {
-      node.textContent = `#${row.marketCapRank}`;
-      node.hidden = false;
-    } else {
-      node.hidden = true;
-    }
-  });
-  setRole("suggestions", (node) => {
-    node.innerHTML = renderSuggestions(row);
-    node.classList.toggle("hidden", !(row.suggestionsOpen && row.suggestions.length));
-  });
-
-  // Update Web button state when coinId changes
-  const webBtn = rowElement.querySelector(".web-btn");
-  if (webBtn) {
-    webBtn.classList.toggle("is-active", Boolean(row.coinId));
-    webBtn.disabled = !row.coinId;
-    webBtn.title = row.coinId ? "CoinGecko: " + row.coinId : "";
-  }
 
   scheduleDashboardRefresh();
 }
@@ -2545,48 +2254,6 @@ function handleHeaderClick(event) {
   renderAll();
   const column = TABLE_COLUMNS.find((item) => item.sortKey === nextKey);
   updateSaveMessage(t("alerts.sortingBy", { column: column ? t(column.labelKey) : nextKey }));
-}
-
-function handleTableInput(event) {
-  const input = event.target.closest("[data-field]");
-  if (!input) {
-    return;
-  }
-
-  const row = getRowById(input.dataset.rowId);
-  if (!row) {
-    return;
-  }
-
-  const field = input.dataset.field;
-  if (field === "crypto") {
-    const nextValue = input.value.trimStart();
-    row.crypto = nextValue;
-    row.coinId = "";
-    row.resolvedName = "";
-    row.symbol = "";
-    row.image = "";
-    row.currentPrice = null;
-    row.priceChange24h = null;
-    row.lastPriceAt = null;
-    row.priceHistory = [];
-    row.priceStatus = nextValue ? "loading" : "idle";
-    row.priceMessage = nextValue ? "Buscando coincidencias..." : "";
-    row.suggestions = [];
-    row.suggestionsOpen = Boolean(nextValue);
-    queueSuggestionLookup(row.id, nextValue);
-    updateLiveRowUi(row.id);
-  } else {
-    const sanitized = sanitizeNumericInput(input.value);
-    if (input.value !== sanitized) {
-      input.value = sanitized;
-    }
-    row[field] = sanitized;
-    recalcPositionTriad(row, field);
-    updateLiveRowUi(row.id);
-  }
-
-  scheduleAutosave();
 }
 
 // Con dos datos cualesquiera del trío inversión/tokens/entrada se calcula el
@@ -2645,157 +2312,482 @@ function recalcPositionTriad(row, editedField) {
     return;
   }
 
-  const targetInput = dom.tableBody.querySelector(
-    `input[data-row-id="${row.id}"][data-field="${target}"]`
-  );
+  // Refleja el campo derivado en el editor abierto (sin pisar el foco).
+  const targetInput = document.querySelector(`[data-editor-field="${target}"]`);
   if (targetInput && document.activeElement !== targetInput) {
     targetInput.value = row[target];
   }
 }
 
-function handleTableBlur(event) {
-  const input = event.target.closest("[data-field]");
-  if (!input) {
-    return;
-  }
-
-  const rowId = input.dataset.rowId;
-  const row = getRowById(rowId);
-  if (!row) {
-    return;
-  }
-
-  const field = input.dataset.field;
-
-  if (field === "crypto") {
-    row.crypto = row.crypto.trim();
-    input.value = row.crypto;
-    clearBlurTimer(rowId);
-    const timerId = window.setTimeout(() => {
-      const liveRow = getRowById(rowId);
-      if (!liveRow) {
+// Click en la tabla/tarjetas: editar, menú contextual o abrir editor tocando
+// la fila. La tabla es de solo lectura; todo lo demás vive en el editor.
+function handleTableClick(event) {
+  const actionBtn = event.target.closest("[data-action]");
+  if (actionBtn) {
+    const rowId = actionBtn.dataset.rowId;
+    switch (actionBtn.dataset.action) {
+      case "empty-add":
+        handleAddRow();
         return;
-      }
-
-      if (liveRow.crypto && !liveRow.coinId) {
-        resolveBestMatchForRow(rowId);
-      } else {
-        liveRow.suggestionsOpen = false;
-        updateLiveRowUi(rowId);
-      }
-    }, 140);
-    state.blurTimers.set(rowId, timerId);
-    return;
+      case "edit-row":
+        openPositionEditor(rowId);
+        return;
+      case "row-menu":
+        openRowMenu(rowId, actionBtn);
+        return;
+      default:
+        return;
+    }
   }
 
-  const normalized = normalizeNumericString(input.value);
-  row[field] = normalized;
-  recalcPositionTriad(row, field);
-  input.value = row[field];
-  updateLiveRowUi(row.id);
-
-  // Re-sort only when focus leaves the table: re-rendering mid-Tab destroys
-  // the element that was about to receive focus and breaks keyboard editing.
-  const nextFocus = event.relatedTarget;
-  if (state.prefs.sortBy !== "asset" && !(nextFocus && dom.tableBody.contains(nextFocus))) {
-    renderTableBody();
-  }
-}
-
-function handleTableFocusIn(event) {
-  const input = event.target.closest("[data-field='crypto']");
-  if (!input) {
-    return;
-  }
-
-  const row = getRowById(input.dataset.rowId);
-  if (!row) {
-    return;
-  }
-
-  if (row.suggestions.length) {
-    row.suggestionsOpen = true;
-    updateLiveRowUi(row.id);
+  // Toque en cualquier parte de la fila (excepto botones) abre el editor.
+  const rowElement = event.target.closest("tr[data-row-id]");
+  if (rowElement) {
+    openPositionEditor(rowElement.dataset.rowId);
   }
 }
 
 function handleTableKeyDown(event) {
-  if (event.key !== "Escape") {
+  if (event.key !== "Enter" && event.key !== " ") {
     return;
   }
-
   const rowElement = event.target.closest("tr[data-row-id]");
-  if (!rowElement) {
-    return;
+  if (rowElement && event.target === rowElement) {
+    event.preventDefault();
+    openPositionEditor(rowElement.dataset.rowId);
   }
-
-  const row = getRowById(rowElement.dataset.rowId);
-  if (!row) {
-    return;
-  }
-
-  row.suggestionsOpen = false;
-  updateLiveRowUi(row.id);
 }
 
-function handleTableMouseDown(event) {
-  const button = event.target.closest("[data-action='select-suggestion']");
-  if (!button) {
+function handleAddRow() {
+  const row = createRow();
+  state.rows.push(row);
+  renderAll();
+  scheduleAutosave();
+  pushActivity(t("alerts.newPositionTitle"), t("alerts.newPositionText"), "neutral");
+  openPositionEditor(row.id);
+}
+
+/* ═══════════════════════════════════════════════════════
+   EDITOR DE POSICIONES (portal global fuera de la tabla)
+   Bottom sheet en móvil / modal centrado en escritorio.
+   Edita la fila viva con autosave; cerrar no descarta.
+   ═══════════════════════════════════════════════════════ */
+
+function bindPositionEditor() {
+  editorPortal = document.getElementById("positionEditorPortal");
+  if (!editorPortal) {
     return;
   }
 
-  event.preventDefault();
+  editorPortal.addEventListener("click", (event) => {
+    if (event.target.closest("[data-editor-close]") || event.target === editorPortal.querySelector(".editor-backdrop")) {
+      closePositionEditor();
+      return;
+    }
+    const suggestion = event.target.closest("[data-editor-coin]");
+    if (suggestion) {
+      selectEditorCoin(suggestion.dataset.editorCoin);
+    }
+  });
 
-  const rowId = button.dataset.rowId;
+  editorPortal.addEventListener("input", (event) => {
+    const field = event.target.closest("[data-editor-field]");
+    if (field) {
+      handleEditorFieldInput(field);
+    }
+  });
+
+  editorPortal.addEventListener("change", (event) => {
+    const fav = event.target.closest("[data-editor-field='favorite']");
+    if (fav) {
+      const row = getRowById(state.editorRowId);
+      if (row) {
+        row.favorite = fav.checked;
+        updateLiveRowUi(row.id);
+        scheduleAutosave();
+      }
+    }
+  });
+
+  editorPortal.addEventListener("submit", (event) => {
+    event.preventDefault();
+    savePositionEditor();
+  });
+}
+
+function openPositionEditor(rowId) {
   const row = getRowById(rowId);
+  if (!row || !editorPortal) {
+    return;
+  }
+  closeRowMenu();
+  state.editorRowId = rowId;
+  renderPositionEditor(row);
+  editorPortal.hidden = false;
+  document.body.classList.add("editor-open");
+  // Foco al primer campo tras la animación (sin provocar zoom en iOS).
+  window.setTimeout(() => {
+    const firstField = editorPortal.querySelector("[data-editor-field='tokens']");
+    if (firstField && !isMobileViewport()) {
+      firstField.focus({ preventScroll: true });
+    }
+  }, 260);
+}
+
+function closePositionEditor() {
+  if (!editorPortal || !state.editorRowId) {
+    return;
+  }
+  clearTimeout(editorSearchTimer);
+  state.editorRowId = null;
+  editorPortal.classList.add("is-closing");
+  const finish = () => {
+    editorPortal.hidden = true;
+    editorPortal.classList.remove("is-closing");
+    document.body.classList.remove("editor-open");
+    editorPortal.innerHTML = "";
+  };
+  // Respeta la animación pero garantiza el cierre aunque no dispare.
+  window.setTimeout(finish, 220);
+}
+
+function renderPositionEditor(row) {
+  const metrics = computeRowMetrics(row);
+  editorPortal.innerHTML = `
+    <div class="editor-backdrop"></div>
+    <form class="editor-panel" id="positionEditorForm" role="dialog" aria-modal="true" aria-label="${escapeHtml(t("editor.title"))}">
+      <header class="editor-head">
+        <div class="editor-grip" aria-hidden="true"></div>
+        <div class="editor-title-row">
+          <h2>${escapeHtml(t("editor.title"))}</h2>
+          <button type="button" class="icon-circle-btn" data-editor-close aria-label="${escapeHtml(t("buttons.close"))}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="editor-body">
+        <label class="editor-field">
+          <span>${escapeHtml(t("editor.asset"))}</span>
+          <input type="text" data-editor-field="crypto" autocomplete="off" placeholder="${escapeHtml(t("row.assetPlaceholder"))}" value="${escapeHtml(row.crypto)}" />
+          <div class="editor-suggestions" data-editor-role="suggestions" hidden></div>
+          <small class="editor-hint" data-editor-role="assetHint">${escapeHtml(editorAssetHint(row))}</small>
+        </label>
+
+        <div class="editor-grid-2">
+          <label class="editor-field">
+            <span>${escapeHtml(t("table.fields.tokens"))}</span>
+            <input type="text" inputmode="decimal" data-editor-field="tokens" value="${escapeHtml(row.tokens)}" placeholder="0.00" />
+          </label>
+          <label class="editor-field">
+            <span>${escapeHtml(t("editor.investment"))}</span>
+            <input type="text" inputmode="decimal" data-editor-field="investment" value="${escapeHtml(row.investment)}" placeholder="0.00" />
+          </label>
+          <label class="editor-field">
+            <span>${escapeHtml(t("editor.entryPrice"))}</span>
+            <input type="text" inputmode="decimal" data-editor-field="entryPrice" value="${escapeHtml(getEntryDisplayValue(row, metrics))}" placeholder="${escapeHtml(t("table.fields.entryAuto"))}" />
+          </label>
+          <div class="editor-field editor-readonly">
+            <span>${escapeHtml(t("editor.currentPrice"))}</span>
+            <strong data-editor-role="currentPrice">${metrics.currentPrice > 0 ? formatCurrency(metrics.currentPrice, getPriceDigits(metrics.currentPrice)) : "--"}</strong>
+          </div>
+        </div>
+
+        <div class="editor-tp-grid">
+          <label class="editor-field"><span>TP1</span><input type="text" inputmode="decimal" data-editor-field="tp1" value="${escapeHtml(row.tp1)}" placeholder="0.00" /></label>
+          <label class="editor-field"><span>TP2</span><input type="text" inputmode="decimal" data-editor-field="tp2" value="${escapeHtml(row.tp2)}" placeholder="0.00" /></label>
+          <label class="editor-field"><span>TP3</span><input type="text" inputmode="decimal" data-editor-field="tp3" value="${escapeHtml(row.tp3)}" placeholder="0.00" /></label>
+        </div>
+
+        <label class="editor-check">
+          <input type="checkbox" data-editor-field="favorite" ${row.favorite ? "checked" : ""} />
+          <span>${escapeHtml(t("editor.favorite"))}</span>
+        </label>
+
+        <div class="editor-grid-2">
+          <label class="editor-field">
+            <span>${escapeHtml(t("editor.purchaseDate"))}</span>
+            <input type="date" data-editor-field="purchaseDate" value="${escapeHtml(row.purchaseDate)}" />
+          </label>
+          <label class="editor-field">
+            <span>${escapeHtml(t("editor.label"))}</span>
+            <input type="text" maxlength="40" data-editor-field="personalLabel" value="${escapeHtml(row.personalLabel)}" placeholder="${escapeHtml(t("editor.labelPlaceholder"))}" />
+          </label>
+        </div>
+
+        <label class="editor-field">
+          <span>${escapeHtml(t("editor.note"))}</span>
+          <textarea data-editor-field="note" rows="2" maxlength="280" placeholder="${escapeHtml(t("editor.notePlaceholder"))}">${escapeHtml(row.note)}</textarea>
+        </label>
+
+        <p class="editor-secondary" data-editor-role="capInfo">${escapeHtml(editorCapInfo(row))}</p>
+      </div>
+
+      <footer class="editor-foot">
+        <button type="button" class="ghost-btn" data-editor-close>${escapeHtml(t("buttons.cancel"))}</button>
+        <button type="submit" class="primary-btn">${escapeHtml(t("editor.save"))}</button>
+      </footer>
+    </form>
+  `;
+}
+
+function editorAssetHint(row) {
+  if (row.coinId) {
+    return `${row.resolvedName || row.crypto}${row.symbol ? ` (${row.symbol})` : ""}`;
+  }
+  return t("editor.searchHint");
+}
+
+function editorCapInfo(row) {
+  if (Number.isFinite(row.marketCap)) {
+    const rank = Number.isFinite(row.marketCapRank) ? `#${row.marketCapRank} · ` : "";
+    return `${t("card.cap")}: ${rank}${formatCompactCurrency(row.marketCap)}`;
+  }
+  return "";
+}
+
+// Refresca los valores derivados del editor sin reconstruirlo (mantiene foco).
+function refreshEditorLiveData() {
+  const row = getRowById(state.editorRowId);
+  if (!row || !editorPortal || editorPortal.hidden) {
+    return;
+  }
+  const metrics = computeRowMetrics(row);
+  const priceNode = editorPortal.querySelector("[data-editor-role='currentPrice']");
+  if (priceNode) {
+    priceNode.textContent = metrics.currentPrice > 0
+      ? formatCurrency(metrics.currentPrice, getPriceDigits(metrics.currentPrice))
+      : "--";
+  }
+  const capNode = editorPortal.querySelector("[data-editor-role='capInfo']");
+  if (capNode) {
+    capNode.textContent = editorCapInfo(row);
+  }
+  const hintNode = editorPortal.querySelector("[data-editor-role='assetHint']");
+  if (hintNode && document.activeElement?.dataset?.editorField !== "crypto") {
+    hintNode.textContent = editorAssetHint(row);
+  }
+}
+
+function handleEditorFieldInput(input) {
+  const row = getRowById(state.editorRowId);
   if (!row) {
     return;
   }
+  const field = input.dataset.editorField;
 
-  // Cancel any pending blur timer to prevent race condition
-  clearBlurTimer(rowId);
-  clearSearchTimer(rowId);
+  if (field === "crypto") {
+    // Cambiar el texto del activo NO borra inversión/tokens/TP: solo marca
+    // que la moneda dejó de estar resuelta y lanza la búsqueda con debounce.
+    const value = input.value.trimStart();
+    row.crypto = value;
+    row.coinId = "";
+    row.resolvedName = "";
+    row.symbol = "";
+    row.priceStatus = value ? "loading" : "idle";
+    clearTimeout(editorSearchTimer);
+    if (value.trim()) {
+      editorSearchTimer = window.setTimeout(() => runEditorSearch(value), SEARCH_DELAY);
+    } else {
+      renderEditorSuggestions([]);
+    }
+    scheduleAutosave();
+    return;
+  }
 
-  const coin = row.suggestions.find((item) => item.id === button.dataset.coinId);
+  if (["investment", "tokens", "entryPrice", "tp1", "tp2", "tp3"].includes(field)) {
+    const sanitized = sanitizeNumericInput(input.value);
+    if (input.value !== sanitized) {
+      input.value = sanitized;
+    }
+    row[field] = sanitized;
+    recalcPositionTriad(row, field);
+    updateLiveRowUi(row.id);
+    scheduleAutosave();
+    return;
+  }
+
+  // Nota, fecha y etiqueta: texto libre, no afecta a cálculos.
+  row[field] = input.value;
+  scheduleAutosave();
+}
+
+async function runEditorSearch(query) {
+  const row = getRowById(state.editorRowId);
+  if (!row) {
+    return;
+  }
+  try {
+    const coins = await searchCoins(query);
+    if (state.editorRowId !== row.id) {
+      return;
+    }
+    row.suggestions = coins.slice(0, 8);
+    renderEditorSuggestions(row.suggestions);
+  } catch {
+    renderEditorSuggestions([]);
+  }
+}
+
+function renderEditorSuggestions(coins) {
+  const box = editorPortal?.querySelector("[data-editor-role='suggestions']");
+  if (!box) {
+    return;
+  }
+  if (!coins.length) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = coins.map((coin) => `
+    <button type="button" class="editor-suggestion" data-editor-coin="${escapeHtml(coin.id)}">
+      <img src="${escapeHtml(coin.thumb || "")}" alt="" loading="lazy" />
+      <span><strong>${escapeHtml(coin.name)}</strong><small>${escapeHtml(String(coin.symbol || "").toUpperCase())}</small></span>
+      <span class="editor-suggestion-rank">${coin.market_cap_rank ? "#" + coin.market_cap_rank : ""}</span>
+    </button>
+  `).join("");
+}
+
+async function selectEditorCoin(coinId) {
+  const row = getRowById(state.editorRowId);
+  if (!row) {
+    return;
+  }
+  const coin = (row.suggestions || []).find((item) => item.id === coinId);
   if (!coin) {
     return;
   }
-
-  applyCoinSelection(rowId, coin, { fetchPrice: true });
+  // Seleccionar moneda actualiza identidad y precio, pero conserva inversión,
+  // tokens y TP (no se borra nada del capital ya introducido).
+  renderEditorSuggestions([]);
+  row.coinId = coin.id;
+  row.resolvedName = coin.name;
+  row.symbol = String(coin.symbol || "").toUpperCase();
+  row.crypto = row.symbol || coin.name;
+  row.image = coin.thumb || coin.image || row.image || "";
+  const cryptoInput = editorPortal.querySelector("[data-editor-field='crypto']");
+  if (cryptoInput) {
+    cryptoInput.value = row.crypto;
+  }
+  refreshEditorLiveData();
+  scheduleAutosave();
+  await refreshSingleRow(row.id, true);
+  refreshEditorLiveData();
 }
 
-function handleTableClick(event) {
-  const button = event.target.closest("[data-action]");
-  if (!button) {
-    return;
+function savePositionEditor() {
+  const row = getRowById(state.editorRowId);
+  if (row) {
+    // Normaliza los numéricos al guardar (igual que hacía el blur de la tabla).
+    ["investment", "tokens", "entryPrice", "tp1", "tp2", "tp3"].forEach((field) => {
+      row[field] = normalizeNumericString(row[field]);
+    });
+    persistState(true);
+    renderAll();
+    updateSaveMessage(t("editor.saved"));
+    showToast(t("editor.savedTitle"), t("editor.savedText"), "positive");
   }
+  closePositionEditor();
+}
 
-  const rowId = button.dataset.rowId;
+/* ── Menú contextual por posición (acciones secundarias) ── */
+
+function openRowMenu(rowId, anchor) {
+  closeRowMenu();
   const row = getRowById(rowId);
   if (!row) {
     return;
   }
+  const menu = document.createElement("div");
+  menu.className = "row-context-menu";
+  menu.id = "rowContextMenu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-menu-action="web" ${row.coinId ? "" : "disabled"}>${escapeHtml(t("menu.openWeb"))}</button>
+    <button type="button" role="menuitem" data-menu-action="refresh">${escapeHtml(t("menu.refresh"))}</button>
+    <button type="button" role="menuitem" data-menu-action="duplicate">${escapeHtml(t("menu.duplicate"))}</button>
+    <button type="button" role="menuitem" class="danger" data-menu-action="delete">${escapeHtml(t("menu.delete"))}</button>
+  `;
+  document.body.appendChild(menu);
+  state.rowMenuOpen = rowId;
 
-  switch (button.dataset.action) {
-    case "toggle-favorite":
-      row.favorite = !row.favorite;
-      renderTableBody();
-      renderDashboardOnly();
-      scheduleAutosave();
-      break;
-    case "open-web":
+  const rect = anchor.getBoundingClientRect();
+  const menuWidth = 190;
+  let left = rect.right - menuWidth;
+  left = Math.max(10, Math.min(left, window.innerWidth - menuWidth - 10));
+  let top = rect.bottom + 6;
+  if (top + menu.offsetHeight > window.innerHeight - 10) {
+    top = rect.top - menu.offsetHeight - 6;
+  }
+  menu.style.left = `${left}px`;
+  menu.style.top = `${Math.max(10, top)}px`;
+
+  menu.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-menu-action]")?.dataset.menuAction;
+    if (action) {
+      handleRowMenuAction(rowId, action);
+    }
+  });
+
+  window.setTimeout(() => {
+    document.addEventListener("click", onRowMenuOutside, { once: true });
+  }, 0);
+}
+
+function onRowMenuOutside(event) {
+  if (!event.target.closest("#rowContextMenu")) {
+    closeRowMenu();
+  }
+}
+
+function closeRowMenu() {
+  const menu = document.getElementById("rowContextMenu");
+  if (menu) {
+    menu.remove();
+  }
+  state.rowMenuOpen = false;
+}
+
+function handleRowMenuAction(rowId, action) {
+  const row = getRowById(rowId);
+  closeRowMenu();
+  if (!row) {
+    return;
+  }
+  switch (action) {
+    case "web":
       if (row.coinId) {
         window.open(`https://www.coingecko.com/en/coins/${encodeURIComponent(row.coinId)}`, "_blank", "noopener");
       }
       break;
-    case "delete-row":
+    case "refresh":
+      refreshSingleRow(rowId, true);
+      break;
+    case "duplicate": {
+      const copy = createRow({
+        ...row,
+        id: undefined,
+        personalLabel: row.personalLabel
+      });
+      const index = state.rows.findIndex((item) => item.id === rowId);
+      state.rows.splice(index + 1, 0, copy);
+      renderAll();
+      scheduleAutosave();
+      pushActivity(t("menu.duplicate"), t("menu.duplicatedText", { asset: assetDisplayName(row) }), "neutral");
+      openPositionEditor(copy.id);
+      break;
+    }
+    case "delete":
+      if (!window.confirm(t("menu.deleteConfirm", { asset: assetDisplayName(row) }))) {
+        return;
+      }
       state.rows = state.rows.filter((item) => item.id !== rowId);
       if (!state.rows.length) {
         state.rows.push(createRow());
       }
       clearTimersForRow(rowId);
       renderAll();
-      syncSheetBackdrop();
       scheduleAutosave();
       pushActivity(
         t("alerts.rowDeletedTitle"),
@@ -2803,49 +2795,8 @@ function handleTableClick(event) {
         "negative"
       );
       break;
-    case "refresh-row":
-      refreshSingleRow(rowId, true);
-      break;
-    case "toggle-details": {
-      const willOpen = !row.detailsOpen;
-      if (isMobileViewport()) {
-        // En móvil el detalle abre como bottom sheet: solo uno a la vez.
-        state.rows.forEach((item) => { item.detailsOpen = false; });
-        row.detailsOpen = willOpen;
-        renderTableBody();
-        syncSheetBackdrop();
-      } else {
-        row.detailsOpen = willOpen;
-        const rowElement = dom.tableBody.querySelector(`tr[data-row-id="${rowId}"]`);
-        if (rowElement) {
-          rowElement.classList.toggle("is-expanded", row.detailsOpen);
-        }
-        button.setAttribute("aria-expanded", row.detailsOpen ? "true" : "false");
-        button.textContent = row.detailsOpen ? t("row.hideDetails") : t("row.showDetails");
-      }
-      break;
-    }
     default:
       break;
-  }
-}
-
-function handleAddRow() {
-  const row = createRow();
-  if (isMobileViewport()) {
-    // Nueva posición en móvil: se abre directamente como bottom sheet.
-    state.rows.forEach((item) => { item.detailsOpen = false; });
-    row.detailsOpen = true;
-  }
-  state.rows.push(row);
-  renderAll();
-  syncSheetBackdrop();
-  scheduleAutosave();
-  pushActivity(t("alerts.newPositionTitle"), t("alerts.newPositionText"), "neutral");
-
-  const input = dom.tableBody.querySelector(`input[data-row-id="${row.id}"][data-field="crypto"]`);
-  if (input) {
-    input.focus();
   }
 }
 
@@ -2879,7 +2830,10 @@ function handleExportCsv() {
     "tp3",
     "favorite",
     "pinned",
-    "derivedField"
+    "derivedField",
+    "note",
+    "purchaseDate",
+    "personalLabel"
   ];
 
   const rows = state.rows.map((row) => [
@@ -2895,7 +2849,10 @@ function handleExportCsv() {
     row.tp3,
     row.favorite ? "true" : "false",
     row.pinned ? "true" : "false",
-    row.derivedField || ""
+    row.derivedField || "",
+    row.note || "",
+    row.purchaseDate || "",
+    row.personalLabel || ""
   ]);
 
   const csv = [headers, ...rows]
@@ -3372,7 +3329,10 @@ async function handleImportCsv(event) {
       tp3: record.tp3 || "",
       favorite: record.favorite === "true",
       pinned: record.pinned === "true",
-      derivedField: record.derivedField || ""
+      derivedField: record.derivedField || "",
+      note: record.note || "",
+      purchaseDate: record.purchaseDate || "",
+      personalLabel: record.personalLabel || ""
     }));
 
     renderAll();
@@ -3620,11 +3580,6 @@ async function applyCoinSelection(rowId, coin, options = {}) {
   row.priceStatus = "loading";
   row.priceMessage = t("row.querying");
   updateLiveRowUi(rowId);
-
-  const input = dom.tableBody.querySelector(`input[data-row-id="${rowId}"][data-field="crypto"]`);
-  if (input) {
-    input.value = row.crypto;
-  }
 
   if (options.fetchPrice) {
     await refreshSingleRow(rowId, false);
@@ -4803,15 +4758,6 @@ function lookupToneClass(row) {
   return "";
 }
 
-function closeAllSuggestions() {
-  state.rows.forEach((row) => {
-    if (row.suggestionsOpen) {
-      row.suggestionsOpen = false;
-      updateLiveRowUi(row.id);
-    }
-  });
-}
-
 function getRowById(rowId) {
   return state.rows.find((row) => row.id === rowId);
 }
@@ -5464,6 +5410,9 @@ function persistState(manual) {
         marketCap: row.marketCap,
         marketCapRank: row.marketCapRank,
         marketCapUpdatedAt: row.marketCapUpdatedAt,
+        note: row.note,
+        purchaseDate: row.purchaseDate,
+        personalLabel: row.personalLabel,
         alertsFired: row.alertsFired
       })),
       activity: state.activity.slice(0, MAX_ACTIVITY_ITEMS)
