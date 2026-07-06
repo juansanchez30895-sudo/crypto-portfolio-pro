@@ -679,17 +679,213 @@ function handleFabAction(action) {
       dom.importFileInput?.click();
       break;
     case "new":
-    case "buy":
-    case "sell":
-    case "alert":
-      // Sin libro de operaciones separado: todas crean/editan una posición en
-      // el editor (donde se ajustan tokens, coste medio y objetivos/alertas).
       setActiveTab("home");
       handleAddRow();
+      break;
+    case "buy":
+      openTradeSheet("buy");
+      break;
+    case "sell":
+      openTradeSheet("sell");
+      break;
+    case "alert":
+      // "Alerta" = objetivos TP de una posición: abre el editor en la
+      // posición elegida (o una nueva) donde se fijan TP1/TP2/TP3.
+      openTradeSheet("alert");
       break;
     default:
       break;
   }
+}
+
+/* ── Compra/venta simplificada (sin libro de operaciones) ──
+   Compra: suma tokens e inversión y recalcula el coste medio.
+   Venta:  resta tokens manteniendo el coste medio (reduce la base). */
+function openTradeSheet(mode) {
+  const sheet = document.getElementById("tradeSheet");
+  if (!sheet) {
+    return;
+  }
+  // Posiciones candidatas: las que ya tienen activo definido.
+  const positions = state.rows.filter((row) => row.crypto.trim());
+
+  if (mode === "sell" && !positions.filter((r) => parseDecimal(r.tokens) > 0).length) {
+    showToast(t("trade.noPositionsTitle"), t("trade.noPositionsText"), "warning");
+    return;
+  }
+
+  const titleKey = mode === "buy" ? "fab.buy" : mode === "sell" ? "fab.sell" : "fab.alert";
+  const options = (mode === "sell"
+    ? positions.filter((r) => parseDecimal(r.tokens) > 0)
+    : positions)
+    .map((row) => `<option value="${row.id}">${escapeHtml(assetDisplayName(row))}</option>`)
+    .join("");
+
+  const amountBlock = mode === "alert"
+    ? ""
+    : `
+      <div class="editor-grid-2">
+        <label class="editor-field">
+          <span>${escapeHtml(t("trade.tokens"))}</span>
+          <input type="text" inputmode="decimal" data-trade-field="tokens" placeholder="0.00" />
+        </label>
+        <label class="editor-field">
+          <span>${escapeHtml(t("trade.price"))}</span>
+          <input type="text" inputmode="decimal" data-trade-field="price" placeholder="0.00" />
+        </label>
+      </div>
+      <p class="editor-secondary" data-trade-role="preview"></p>
+    `;
+
+  const alertBlock = mode === "alert"
+    ? `
+      <div class="editor-tp-grid">
+        <label class="editor-field"><span>TP1</span><input type="text" inputmode="decimal" data-trade-field="tp1" placeholder="0.00" /></label>
+        <label class="editor-field"><span>TP2</span><input type="text" inputmode="decimal" data-trade-field="tp2" placeholder="0.00" /></label>
+        <label class="editor-field"><span>TP3</span><input type="text" inputmode="decimal" data-trade-field="tp3" placeholder="0.00" /></label>
+      </div>
+    `
+    : "";
+
+  sheet.innerHTML = `
+    <div class="editor-backdrop" data-trade-close></div>
+    <form class="editor-panel" data-trade-mode="${mode}" role="dialog" aria-modal="true">
+      <header class="editor-head">
+        <div class="editor-grip" aria-hidden="true"></div>
+        <div class="editor-title-row">
+          <h2>${escapeHtml(t(titleKey))}</h2>
+          <button type="button" class="icon-circle-btn" data-trade-close aria-label="${escapeHtml(t("buttons.close"))}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
+      </header>
+      <div class="editor-body">
+        <label class="editor-field">
+          <span>${escapeHtml(t("trade.asset"))}</span>
+          <select data-trade-field="rowId">${options || `<option value="">--</option>`}</select>
+        </label>
+        ${amountBlock}
+        ${alertBlock}
+      </div>
+      <footer class="editor-foot">
+        <button type="button" class="ghost-btn" data-trade-close>${escapeHtml(t("buttons.cancel"))}</button>
+        <button type="submit" class="primary-btn">${escapeHtml(t("trade.confirm"))}</button>
+      </footer>
+    </form>
+  `;
+
+  sheet.hidden = false;
+  document.body.classList.add("editor-open");
+
+  const select = sheet.querySelector("[data-trade-field='rowId']");
+  const priceInput = sheet.querySelector("[data-trade-field='price']");
+  const syncPrice = () => {
+    const row = getRowById(select.value);
+    if (row && priceInput && !priceInput.value) {
+      priceInput.value = row.currentPrice > 0 ? formatEditableNumber(row.currentPrice) : "";
+    }
+    updateTradePreview(sheet);
+  };
+  select?.addEventListener("change", () => { if (priceInput) priceInput.value = ""; syncPrice(); });
+  syncPrice();
+
+  sheet.addEventListener("click", (event) => {
+    if (event.target.closest("[data-trade-close]")) {
+      closeTradeSheet();
+    }
+  });
+  sheet.addEventListener("input", () => updateTradePreview(sheet));
+  sheet.querySelector("form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    confirmTrade(sheet);
+  });
+}
+
+function updateTradePreview(sheet) {
+  const preview = sheet.querySelector("[data-trade-role='preview']");
+  if (!preview) {
+    return;
+  }
+  const tokens = parseDecimal(sheet.querySelector("[data-trade-field='tokens']")?.value);
+  const price = parseDecimal(sheet.querySelector("[data-trade-field='price']")?.value);
+  if (tokens > 0 && price > 0) {
+    preview.textContent = `${t("trade.total")}: ${formatCurrency(tokens * price)}`;
+  } else {
+    preview.textContent = "";
+  }
+}
+
+function closeTradeSheet() {
+  const sheet = document.getElementById("tradeSheet");
+  if (!sheet) {
+    return;
+  }
+  sheet.classList.add("is-closing");
+  window.setTimeout(() => {
+    sheet.hidden = true;
+    sheet.classList.remove("is-closing");
+    sheet.innerHTML = "";
+    if (!state.editorRowId) {
+      document.body.classList.remove("editor-open");
+    }
+  }, 200);
+}
+
+function confirmTrade(sheet) {
+  const mode = sheet.querySelector("form").dataset.tradeMode;
+  const row = getRowById(sheet.querySelector("[data-trade-field='rowId']").value);
+  if (!row) {
+    return;
+  }
+
+  if (mode === "alert") {
+    ["tp1", "tp2", "tp3"].forEach((tp) => {
+      const value = sheet.querySelector(`[data-trade-field='${tp}']`)?.value;
+      if (value && parseDecimal(value) > 0) {
+        row[tp] = normalizeNumericString(value);
+      }
+    });
+    finishTrade(row, t("trade.alertSaved", { asset: assetDisplayName(row) }));
+    return;
+  }
+
+  const addTokens = parseDecimal(sheet.querySelector("[data-trade-field='tokens']").value);
+  const price = parseDecimal(sheet.querySelector("[data-trade-field='price']").value);
+  if (!(addTokens > 0)) {
+    showToast(t("trade.invalidTitle"), t("trade.invalidText"), "warning");
+    return;
+  }
+
+  const curTokens = parseDecimal(row.tokens);
+  const curInvestment = parseDecimal(row.investment);
+
+  if (mode === "buy") {
+    const addInvestment = addTokens * (price > 0 ? price : (curTokens > 0 ? curInvestment / curTokens : 0));
+    const newTokens = curTokens + addTokens;
+    const newInvestment = curInvestment + addInvestment;
+    row.tokens = formatEditableNumber(newTokens);
+    row.investment = formatEditableNumber(newInvestment);
+    row.entryPrice = newTokens > 0 ? formatEditableNumber(newInvestment / newTokens) : "";
+    row.derivedField = "";
+    finishTrade(row, t("trade.buySaved", { tokens: formatNumber(addTokens, 6), asset: assetDisplayName(row) }));
+  } else {
+    // Venta: mantiene el coste medio y reduce la base proporcionalmente.
+    const avgCost = curTokens > 0 ? curInvestment / curTokens : 0;
+    const newTokens = Math.max(0, curTokens - addTokens);
+    row.tokens = newTokens > 0 ? formatEditableNumber(newTokens) : "";
+    row.investment = newTokens > 0 ? formatEditableNumber(newTokens * avgCost) : "";
+    row.entryPrice = newTokens > 0 ? formatEditableNumber(avgCost) : "";
+    row.derivedField = "";
+    finishTrade(row, t("trade.sellSaved", { tokens: formatNumber(addTokens, 6), asset: assetDisplayName(row) }));
+  }
+}
+
+function finishTrade(row, message) {
+  persistState(true);
+  renderAll();
+  pushActivity(t("trade.activityTitle"), message, "neutral");
+  showToast(t("editor.savedTitle"), message, "positive");
+  closeTradeSheet();
 }
 
 // ── Pestaña Mercados: widgets + ganadores/perdedores 24h ──
