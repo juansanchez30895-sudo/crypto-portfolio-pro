@@ -6038,3 +6038,17 @@ body.filters-open { overflow: hidden; }
 :root[data-theme="light"] .sim-inputs select, :root[data-theme="light"] .sim-inputs input { background: rgba(255,255,255,0.8); }
 .plan-sim-card select#simType { min-height: 46px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--glass-border); background: rgba(5,12,22,0.5); color: var(--text); font-size: 16px; }
 :root[data-theme="light"] .plan-sim-card select#simType { background: rgba(255,255,255,0.8); }
+
+/* Planes DCA */
+.dca-list { display: flex; flex-direction: column; gap: 8px; }
+.dca-plan { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--glass-border); background: var(--glass-card); }
+.dca-plan.is-due { border-color: var(--line-accent); box-shadow: 0 0 0 1px rgba(62,255,168,0.15); }
+.dca-plan-main { flex: 1; min-width: 0; }
+.dca-plan-main strong { display: block; font-size: 0.86rem; }
+.dca-plan-main small { display: block; font-size: 0.72rem; color: var(--muted); }
+.dca-plan-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.dca-plan-actions .ghost-btn { min-height: 36px; padding: 0 12px; }
+.dca-plan-actions .icon-btn { min-height: 36px; width: 36px; padding: 0; }
+.dca-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.dca-form select, .dca-form input { min-height: 46px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--glass-border); background: rgba(5,12,22,0.5); color: var(--text); font-size: 16px; }
+:root[data-theme="light"] .dca-form select, :root[data-theme="light"] .dca-form input { background: rgba(255,255,255,0.8); }

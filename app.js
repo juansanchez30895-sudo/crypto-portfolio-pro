@@ -258,7 +258,7 @@ const state = {
   currencySwitchId: 0,
   filterQuery: "",
   filters: { category: "all", performance: "all", weightMin: 0, capMin: 0, favorites: false, alerts: false },
-  plan: { goalTotal: null, monthlyContribution: null, mode: "balance", fullMode: "equilibrado", reserveStable: 0, feePct: 0, lastAmount: null, targets: {} },
+  plan: { goalTotal: null, monthlyContribution: null, mode: "balance", fullMode: "equilibrado", reserveStable: 0, feePct: 0, lastAmount: null, targets: {}, dca: [] },
   heroVisible: true,
   editorRowId: null,
   rowMenuOpen: false,
@@ -1069,6 +1069,8 @@ function renderPlan() {
       <div id="simResult" class="plan-result"></div>
     </section>
 
+    ${renderDcaSection()}
+
     <p class="plan-disclaimer">${escapeHtml(PLAN_DISCLAIMER)}</p>
   `;
 
@@ -1241,6 +1243,13 @@ function bindPlan() {
       renderPlan();
       return;
     }
+    const dcaRun = event.target.closest("[data-dca-run]");
+    if (dcaRun) { executeDca(dcaRun.dataset.dcaRun); return; }
+    const dcaSkip = event.target.closest("[data-dca-skip]");
+    if (dcaSkip) { skipDca(dcaSkip.dataset.dcaSkip); return; }
+    const dcaDel = event.target.closest("[data-dca-del]");
+    if (dcaDel) { if (window.confirm(t("dca.deleteConfirm"))) deleteDca(dcaDel.dataset.dcaDel); return; }
+
     const action = event.target.closest("[data-plan-action]")?.dataset.planAction;
     if (!action) return;
     handlePlanAction(action);
@@ -1335,6 +1344,17 @@ function handlePlanAction(action) {
     case "simRun":
       runSimulator();
       break;
+    case "dcaCreate": {
+      const amount = parseDecimal(document.getElementById("dcaAmount")?.value);
+      const freq = document.getElementById("dcaFreq")?.value || "monthly";
+      const mode = document.getElementById("dcaMode")?.value || "dynamic";
+      if (amount > 0) {
+        createDcaPlan(amount, freq, mode);
+      } else {
+        showToast(t("plan.needAmount"), t("plan.needAmount"), "warning");
+      }
+      break;
+    }
     case "simApplySell": {
       const btn = document.querySelector("[data-plan-action='simApplySell']");
       const row = getRowById(btn?.dataset.rowId);
@@ -1539,6 +1559,118 @@ function runSimulator() {
       <p class="plan-hint">${escapeHtml(t("plan.monthsToGoal", { n: months || 0 }))}</p>`;
     return;
   }
+}
+
+/* ── Planes DCA (aportaciones periódicas, fija o dinámica) ── */
+const DCA_INTERVALS = { weekly: 7, biweekly: 14, monthly: 30 };
+
+function dcaAdvance(dateStr, freq) {
+  const base = dateStr ? new Date(dateStr) : new Date();
+  const next = new Date(base);
+  if (freq === "monthly") {
+    next.setMonth(next.getMonth() + 1);
+  } else {
+    next.setDate(next.getDate() + (DCA_INTERVALS[freq] || 30));
+  }
+  return next.toISOString();
+}
+
+function getDuePlans() {
+  const now = Date.now();
+  return (state.plan.dca || []).filter((p) => new Date(p.nextDate).getTime() <= now);
+}
+
+function createDcaPlan(amount, freq, mode) {
+  const plan = {
+    id: `dca-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+    amount,
+    freq,
+    mode,
+    nextDate: dcaAdvance(new Date().toISOString(), freq),
+    history: []
+  };
+  state.plan.dca.push(plan);
+  savePlan();
+  renderPlan();
+}
+
+function executeDca(id) {
+  const plan = (state.plan.dca || []).find((p) => p.id === id);
+  if (!plan) return;
+  // Modo dinámico → equilibra según desviación; fijo → mantiene la estrategia.
+  const result = computeContributionPlan(plan.amount, plan.mode === "dynamic" ? "balance" : "maintain");
+  if (result.error) {
+    showToast(t("plan.needStrategy"), t("plan.needStrategy"), "warning");
+    return;
+  }
+  planLastResult = result;
+  applyContributionPlan();
+  plan.history.unshift({ at: new Date().toISOString(), amount: plan.amount });
+  plan.history = plan.history.slice(0, 24);
+  plan.nextDate = dcaAdvance(new Date().toISOString(), plan.freq);
+  savePlan();
+  renderPlan();
+}
+
+function skipDca(id) {
+  const plan = (state.plan.dca || []).find((p) => p.id === id);
+  if (!plan) return;
+  plan.nextDate = dcaAdvance(new Date().toISOString(), plan.freq);
+  savePlan();
+  renderPlan();
+}
+
+function deleteDca(id) {
+  state.plan.dca = (state.plan.dca || []).filter((p) => p.id !== id);
+  savePlan();
+  renderPlan();
+}
+
+function renderDcaSection() {
+  const plans = state.plan.dca || [];
+  const freqLabel = { weekly: t("dca.weekly"), biweekly: t("dca.biweekly"), monthly: t("dca.monthly") };
+  const list = plans.length ? plans.map((p) => {
+    const due = new Date(p.nextDate).getTime() <= Date.now();
+    return `
+      <div class="dca-plan ${due ? "is-due" : ""}">
+        <div class="dca-plan-main">
+          <strong>${formatCurrency(p.amount)} · ${escapeHtml(freqLabel[p.freq] || p.freq)}</strong>
+          <small>${escapeHtml(p.mode === "dynamic" ? t("dca.dynamic") : t("dca.fixed"))} · ${escapeHtml(due ? t("dca.due") : t("dca.next", { date: formatDateTime(new Date(p.nextDate)) }))}</small>
+        </div>
+        <div class="dca-plan-actions">
+          <button class="ghost-btn" type="button" data-dca-run="${p.id}">${escapeHtml(t("dca.run"))}</button>
+          <button class="icon-btn" type="button" data-dca-skip="${p.id}" title="${escapeHtml(t("dca.skip"))}">⤼</button>
+          <button class="icon-btn" type="button" data-dca-del="${p.id}" title="${escapeHtml(t("menu.delete"))}">✕</button>
+        </div>
+      </div>`;
+  }).join("") : `<p class="plan-hint">${escapeHtml(t("dca.empty"))}</p>`;
+
+  return `
+    <section class="panel plan-dca-card">
+      <div class="panel-heading compact-heading">
+        <h2 class="home-section-title" data-i18n="dca.title">Aportaciones periodicas (DCA)</h2>
+      </div>
+      <div class="dca-list">${list}</div>
+      <div class="dca-form">
+        <label class="editor-field"><span>${escapeHtml(t("plan.amount"))}</span><input type="text" inputmode="decimal" id="dcaAmount" placeholder="100" /></label>
+        <div class="plan-adv">
+          <label class="editor-field"><span>${escapeHtml(t("dca.freq"))}</span>
+            <select id="dcaFreq">
+              <option value="weekly">${escapeHtml(t("dca.weekly"))}</option>
+              <option value="biweekly">${escapeHtml(t("dca.biweekly"))}</option>
+              <option value="monthly" selected>${escapeHtml(t("dca.monthly"))}</option>
+            </select>
+          </label>
+          <label class="editor-field"><span>${escapeHtml(t("dca.mode"))}</span>
+            <select id="dcaMode">
+              <option value="dynamic">${escapeHtml(t("dca.dynamic"))}</option>
+              <option value="fixed">${escapeHtml(t("dca.fixed"))}</option>
+            </select>
+          </label>
+        </div>
+        <button class="ghost-btn" type="button" data-plan-action="dcaCreate">${escapeHtml(t("dca.create"))}</button>
+      </div>
+    </section>`;
 }
 
 /* ── Compra/venta simplificada (sin libro de operaciones) ──
@@ -2620,7 +2752,7 @@ function loadState() {
     state.filters = { ...state.filters, ...state.prefs.filters };
   }
   if (state.prefs.plan && typeof state.prefs.plan === "object") {
-    state.plan = { ...state.plan, ...state.prefs.plan, targets: state.prefs.plan.targets || {} };
+    state.plan = { ...state.plan, ...state.prefs.plan, targets: state.prefs.plan.targets || {}, dca: Array.isArray(state.prefs.plan.dca) ? state.prefs.plan.dca : [] };
   }
   // Migración segura: la pestaña activa "portfolio" antigua ya no existe.
   if (state.prefs.activeTab === "portfolio") {
