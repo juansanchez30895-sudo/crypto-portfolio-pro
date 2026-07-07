@@ -216,19 +216,13 @@ const DEFAULT_ROWS = [
   }
 ];
 
-// Tabla de solo lectura: la edición vive en el editor-portal. Las columnas
-// marcadas "desktop" solo se ven en la vista avanzada de escritorio; en móvil
-// se usan tarjetas y quedan ocultas por CSS.
+// Tabla simplificada de solo lectura: la edición vive en el editor-portal.
 const TABLE_COLUMNS = [
   { key: "asset", labelKey: "table.columns.asset", sortKey: "asset" },
-  { key: "qty", labelKey: "table.columns.qty", sortKey: "tokens", desktop: true },
   { key: "price", labelKey: "table.columns.priceCol", sortKey: "currentPrice" },
   { key: "invested", labelKey: "table.columns.invested", sortKey: "investment" },
   { key: "value", labelKey: "table.columns.value", sortKey: "currentValue" },
   { key: "pnl", labelKey: "table.columns.performance", sortKey: "pnlPct" },
-  { key: "pnl24", labelKey: "table.columns.pnl24", sortKey: "change24h", desktop: true },
-  { key: "weight", labelKey: "table.columns.weight", sortKey: "currentValue", desktop: true },
-  { key: "cap", labelKey: "table.columns.cap", sortKey: "marketCap", desktop: true },
   { key: "actions", labelKey: "table.columns.actions", sortKey: null }
 ];
 
@@ -2298,10 +2292,6 @@ function renderRow(row, totalValue = 0) {
         </div>
       </td>
 
-      <td class="qty-col col-qty" data-label="${escapeHtml(t("table.columns.qty"))}">
-        <strong class="numeric" data-role="rowQty">${metrics.tokens > 0 ? formatNumber(metrics.tokens, metrics.tokens >= 1 ? 4 : 8) : "--"}</strong>
-      </td>
-
       <td class="price-col col-price" data-label="${escapeHtml(t("table.columns.priceCol"))}">
         <div class="stack-cell">
           <strong class="money" data-role="rowPrice">${priceText}</strong>
@@ -2326,18 +2316,6 @@ function renderRow(row, totalValue = 0) {
           <strong class="money ${toneClass(metrics.pnlUsd)}" data-role="rowPnlAbs">${maskedSignedCurrency(metrics.pnlUsd)}</strong>
           <span class="numeric ${toneClass(metrics.pnlPct)}" data-role="rowPnlPct">${formatPercent(metrics.pnlPct)}</span>
         </div>
-      </td>
-
-      <td class="pnl24-col col-pnl24" data-label="${escapeHtml(t("table.columns.pnl24"))}">
-        <strong class="numeric ${toneClass(row.priceChange24h || 0)}" data-role="rowPnl24">${changeText}</strong>
-      </td>
-
-      <td class="weight-col col-weight" data-label="${escapeHtml(t("table.columns.weight"))}">
-        <strong class="numeric" data-role="rowWeightCol">${weight != null ? weight.toFixed(1) + "%" : "--"}</strong>
-      </td>
-
-      <td class="cap-col col-cap" data-label="${escapeHtml(t("table.columns.cap"))}">
-        <strong class="numeric" data-role="rowCap">${Number.isFinite(row.marketCap) ? formatCompactCurrency(row.marketCap) : "--"}</strong>
       </td>
 
       <td class="actions-cell col-actions" data-label="${escapeHtml(t("table.columns.actions"))}">
@@ -3379,7 +3357,6 @@ function renderTotalsRow(snapshot) {
   dom.totalsFoot.innerHTML = `
     <tr class="totals-row">
       <td class="totals-label-cell col-asset">${escapeHtml(t("table.totals"))}</td>
-      <td class="col-qty"></td>
       <td class="col-price"></td>
       <td class="totals-inline-cell money col-invested" data-label="${escapeHtml(t("summary.totalInvested"))}">${maskedCurrency(snapshot.totals.investment)}</td>
       <td class="totals-inline-cell money col-value" data-label="${escapeHtml(t("summary.totalValue"))}">${maskedCurrency(snapshot.totals.currentValue)}</td>
@@ -3387,9 +3364,6 @@ function renderTotalsRow(snapshot) {
         <span class="money ${toneClass(totalPnl)}">${maskedSignedCurrency(totalPnl)}</span>
         <span class="totals-inline-meta ${toneClass(totalPnlPct)}">${formatPercent(totalPnlPct)}</span>
       </td>
-      <td class="col-pnl24"></td>
-      <td class="col-weight"></td>
-      <td class="col-cap"></td>
       <td class="col-actions"></td>
     </tr>
   `;
@@ -3587,17 +3561,6 @@ function updateLiveRowUi(rowId) {
   setRole("rowInvested", (node) => { node.textContent = maskedCurrency(metrics.investment); });
   setRole("rowValue", (node) => { node.textContent = maskedCurrency(metrics.currentValue); });
   setRole("rowWeight", (node) => { node.textContent = weight != null ? `${weight.toFixed(1)}%` : "--"; });
-  setRole("rowWeightCol", (node) => { node.textContent = weight != null ? `${weight.toFixed(1)}%` : "--"; });
-  setRole("rowQty", (node) => {
-    node.textContent = metrics.tokens > 0 ? formatNumber(metrics.tokens, metrics.tokens >= 1 ? 4 : 8) : "--";
-  });
-  setRole("rowCap", (node) => {
-    node.textContent = Number.isFinite(row.marketCap) ? formatCompactCurrency(row.marketCap) : "--";
-  });
-  setRole("rowPnl24", (node) => {
-    node.textContent = Number.isFinite(row.priceChange24h) ? formatSignedPercent(row.priceChange24h) : "--";
-    node.className = `numeric ${toneClass(row.priceChange24h || 0)}`;
-  });
   setRole("rowPnlAbs", (node) => {
     node.textContent = maskedSignedCurrency(metrics.pnlUsd);
     node.className = `money ${toneClass(metrics.pnlUsd)}`;

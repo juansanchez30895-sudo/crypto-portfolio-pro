@@ -5838,88 +5838,13 @@ body.detail-open { overflow: hidden; }
 .risk-list-block { display: flex; flex-direction: column; gap: 8px; }
 
 /* ═══════════════════════════════════════════════════════
-   ESCRITORIO v15 — barra lateral, tabla avanzada y filtros
+   FILTROS v15 — botón y panel de filtros de la tabla
+   (sin cambios en la navegación ni columnas: se mantiene
+   el aspecto original)
    ═══════════════════════════════════════════════════════ */
 
-/* Columnas avanzadas: solo escritorio */
-@media (max-width: 768px) {
-  .col-qty, .col-pnl24, .col-weight, .col-cap,
-  .desktop-only-inline { display: none !important; }
-}
-
-/* En escritorio la tabla tiene columna Peso propia: el chip del valor sobra */
-@media (min-width: 769px) {
-  .value-col .weight-chip { display: none; }
-  .col-qty, .col-pnl24, .col-weight, .col-cap { text-align: right; }
-  th.col-qty .th-shell, th.col-pnl24 .th-shell,
-  th.col-weight .th-shell, th.col-cap .th-shell { justify-content: flex-end; }
-  .qty-col strong, .pnl24-col strong, .weight-col strong, .cap-col strong {
-    font-family: var(--font-mono); font-size: 0.82rem; font-variant-numeric: tabular-nums;
-  }
-  .cap-col strong { color: var(--muted); }
-}
-
-/* ── Barra lateral izquierda (escritorio) ── */
-@media (min-width: 900px) {
-  .tab-bar {
-    top: 0;
-    bottom: 0;
-    left: 0;
-    right: auto;
-    transform: none;
-    width: 84px;
-    height: 100dvh;
-    flex-direction: column;
-    justify-content: flex-start;
-    gap: 6px;
-    padding: 16px 10px;
-    border-radius: 0;
-    border: none;
-    border-right: 1px solid var(--glass-border);
-    grid-template-columns: none;
-  }
-  .tab-bar .tab-btn {
-    flex-direction: column;
-    gap: 4px;
-    width: 100%;
-    min-height: 60px;
-    font-size: 0.64rem;
-    border-radius: 16px;
-  }
-  .tab-bar .tab-btn svg { width: 22px; height: 22px; }
-  .tab-fab { order: 99; margin-top: auto; }
-  .tab-fab .tab-fab-circle { width: 48px; height: 48px; }
-  .tab-fab .tab-fab-circle svg { width: 24px; height: 24px; }
-
-  .app-shell {
-    padding-top: 24px;
-    padding-left: calc(84px + 20px);
-    max-width: 1500px;
-  }
-  .sticky-bar { left: calc(50% + 42px); }
-}
-
-/* ── Buscador y botón Filtros de la tabla ── */
+/* ── Botón Filtros de la tabla ── */
 .cartera-toolbar { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
-.table-search {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.table-search svg { position: absolute; left: 12px; width: 16px; height: 16px; color: var(--muted); pointer-events: none; }
-.table-search input {
-  min-height: 40px;
-  width: 220px;
-  padding: 0 12px 0 36px;
-  border-radius: 12px;
-  border: 1px solid var(--glass-border);
-  background: rgba(5,12,22,0.5);
-  color: var(--text);
-  font-size: 0.85rem;
-}
-:root[data-theme="light"] .table-search input { background: rgba(255,255,255,0.8); }
-.table-search input:focus { outline: none; border-color: var(--accent); }
-
 .filters-btn { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; position: relative; }
 .filters-btn svg { width: 16px; height: 16px; }
 .filters-count {
