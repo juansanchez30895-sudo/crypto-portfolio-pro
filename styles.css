@@ -6131,3 +6131,53 @@ body.filters-open { overflow: hidden; }
 .tpg-row span:not(:first-child) { text-align: right; }
 .tpg-head { color: var(--muted); font-weight: 700; }
 .tp-card { gap: 12px; }
+
+/* ── Simulador TP: bloques globales, escenarios y config por activo ── */
+.tp-block { display: flex; flex-direction: column; gap: 12px; border-left: 3px solid transparent; }
+.tp-block-head { display: flex; align-items: flex-start; gap: 10px; }
+.tp-block-head h2 { margin: 0; }
+.tp-block-head small { display: block; font-size: 0.66rem; color: var(--muted); line-height: 1.35; margin-top: 3px; }
+.tp-block-badge { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; font-family: var(--font-mono); font-weight: 700; font-size: 0.82rem; color: #04121a; flex-shrink: 0; }
+.tp-block-prog { border-left-color: var(--accent); }
+.tp-block-prog .tp-block-badge { background: var(--accent); }
+.tp-block-full { border-left-color: var(--accent2, #a988ff); }
+.tp-block-full .tp-block-badge { background: var(--accent2, #a988ff); }
+
+.tp-table-prog .tpg-exp { text-align: left; font-size: 0.62rem; color: var(--muted); white-space: normal; }
+.tp-table-full .tpg-row { grid-template-columns: 1.4fr 1fr 1fr 1fr; }
+.tp-table-compare .tpg-row { grid-template-columns: 1.2fr repeat(calc(var(--tp-cols, 5) - 1), minmax(46px, 1fr)); }
+
+.tp-scenarios { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.tp-scenario { padding: 12px 14px; border-radius: 14px; background: var(--panel-soft); display: flex; flex-direction: column; gap: 8px; }
+.tp-scenario-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-family: var(--font-mono); }
+.tp-scenario-top strong { font-size: 0.72rem; color: var(--muted); }
+.tp-scenario-top b { font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+.tp-scenario-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+.tp-scenario-grid > div { display: flex; flex-direction: column; }
+.tp-scenario-grid span { font-size: 0.54rem; text-transform: uppercase; color: var(--muted); font-family: var(--font-mono); }
+.tp-scenario-grid b { font-family: var(--font-mono); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+
+.tp-config { display: flex; flex-direction: column; gap: 5px; padding: 10px 12px; border-radius: 12px; background: var(--panel-soft); }
+.tp-config-row, .tp-config-legend { display: grid; grid-template-columns: 42px 1fr 74px; gap: 8px; align-items: center; }
+.tp-config-legend { font-size: 0.52rem; text-transform: uppercase; color: var(--muted); font-family: var(--font-mono); }
+.tp-config-legend span:nth-child(1) { grid-column: 2; }
+.tp-config-legend span:nth-child(2) { grid-column: 3; text-align: right; }
+.tp-config-label { font-family: var(--font-mono); font-size: 0.72rem; color: var(--accent); font-weight: 700; }
+.tp-config-row.is-optional .tp-config-label { color: var(--muted); }
+.tp-config-price, .tp-config-pct input { min-height: 34px; border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(5,12,22,0.5); color: var(--text); font-size: 16px; padding: 0 8px; text-align: right; width: 100%; }
+:root[data-theme="light"] .tp-config-price, :root[data-theme="light"] .tp-config-pct input { background: rgba(255,255,255,0.8); }
+.tp-config-price-ro { font-family: var(--font-mono); font-size: 0.74rem; text-align: right; color: var(--text); }
+.tp-config-price-ro .muted { color: var(--muted-2); font-size: 0.64rem; }
+.tp-config-pct { display: flex; align-items: center; gap: 3px; justify-content: flex-end; font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted); }
+.tp-config-pct input { width: 52px; }
+
+.tp-step-reached { outline: 1px solid rgba(255,180,60,0.35); }
+.tp-reached-tag { font-style: normal; font-size: 0.54rem; text-transform: uppercase; color: #ffb43c; background: rgba(255,180,60,0.14); padding: 1px 5px; border-radius: 5px; }
+.tp-warn { color: #ffb43c; }
+.tp-notice { border: 1px dashed var(--line); }
+.tp-notice strong { font-size: 0.85rem; }
+.tp-detail-head { margin: 4px 0 -2px; }
+.tp-detail-head h2 { margin: 0; }
+.tp-full-grid { display: flex; flex-wrap: wrap; gap: 6px 14px; width: 100%; }
+.tp-full-grid > div { display: flex; align-items: baseline; gap: 5px; font-family: var(--font-mono); font-size: 0.72rem; }
+.tp-full-grid small { font-size: 0.62rem; }

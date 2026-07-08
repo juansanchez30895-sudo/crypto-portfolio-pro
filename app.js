@@ -890,7 +890,8 @@ function applyRebalance(result) {
 
 /* ── Simulador de Take Profits ── */
 function getTpConfig(rowId) {
-  const def = { p1: 30, p2: 50, p3: 100 };
+  // TP1-TP3: precio en la fila (editor/CSV) + % aquí. TP4/TP5: precio y % solo aquí.
+  const def = { p1: 30, p2: 50, p3: 100, p4: 0, p5: 0, price4: 0, price5: 0 };
   return { ...def, ...((state.plan.tp || {})[rowId] || {}) };
 }
 function setTpConfig(rowId, patch) {
@@ -899,54 +900,136 @@ function setTpConfig(rowId, patch) {
   savePlan();
 }
 
+// Coste histórico del activo (usa inversión real si existe; si no, tokens × medio).
+function tpCost(p) {
+  return p.investment > 0 ? p.investment : p.tokens * p.avg;
+}
+
+// Devuelve los niveles TP configurados (hasta 5), en orden, sólo con precio > 0.
+// TP1-TP3 toman el precio de la fila; TP4/TP5 del config del simulador.
+function getTpLevels(p) {
+  const cfg = getTpConfig(p.id);
+  const raw = [
+    { price: p.tp1, pct: cfg.p1 },
+    { price: p.tp2, pct: cfg.p2 },
+    { price: p.tp3, pct: cfg.p3 },
+    { price: Number(cfg.price4) || 0, pct: cfg.p4 },
+    { price: Number(cfg.price5) || 0, pct: cfg.p5 }
+  ];
+  return raw
+    .map((l, idx) => ({
+      idx,
+      label: `TP${idx + 1}`,
+      price: Number(l.price) || 0,
+      pct: planClamp(Number(l.pct) || 0, 0, 100)
+    }))
+    .filter((l) => l.price > 0);
+}
+
 // Salida progresiva: cada porcentaje se aplica sobre lo que queda.
 function computeTpProgressive(p) {
-  const cfg = getTpConfig(p.id);
-  const levels = [
-    { price: p.tp1, pct: planClamp(Number(cfg.p1) || 0, 0, 100) },
-    { price: p.tp2, pct: planClamp(Number(cfg.p2) || 0, 0, 100) },
-    { price: p.tp3, pct: planClamp(Number(cfg.p3) || 0, 0, 100) }
-  ].filter((l) => l.price > 0);
-
-  const cost = p.investment > 0 ? p.investment : p.tokens * p.avg;
+  const levels = getTpLevels(p);
+  const cost = tpCost(p);
   let rem = p.tokens;
   let out = 0;
-  const steps = levels.map((l, i) => {
+  let acc = 0;
+  const steps = levels.map((l) => {
     const sold = rem * (l.pct / 100);
     const income = sold * l.price;
     rem -= sold;
     out += income;
-    return { label: `TP${i + 1}`, price: l.price, pct: l.pct, sold, remaining: rem, income };
+    acc += income;
+    return {
+      idx: l.idx, label: l.label, price: l.price, pct: l.pct,
+      sold, remaining: rem, income, accIncome: acc,
+      remainingValue: p.price > 0 ? rem * p.price : 0,
+      reached: p.price > 0 && p.price >= l.price
+    };
   });
   const remainingValue = p.price > 0 ? rem * p.price : 0;
   const totalOut = out;
   const profit = totalOut + remainingValue - cost;
   const roi = cost > 0 ? (profit / cost) * 100 : 0;
-  // Venta del 100% en cada TP por separado.
-  const full = levels.map((l, i) => ({ label: `TP${i + 1}`, price: l.price, income: p.tokens * l.price }));
-  const best = full.reduce((b, f) => (f.income > (b?.income || 0) ? f : b), null);
-  return { hasTp: levels.length > 0, steps, remaining: rem, remainingValue, totalOut, cost, profit, roi, full, best };
+  return {
+    hasTp: levels.length > 0, levels, steps,
+    remaining: rem, remainingValue, totalOut, cost, profit, roi,
+    noData: !(p.price > 0) || !(p.tokens > 0)
+  };
 }
 
-function computeTpGlobal() {
+// Venta del 100% de la posición en cada TP por separado (no acumulativo).
+function computeTpFull(p) {
+  const cost = tpCost(p);
+  return getTpLevels(p).map((l) => {
+    const income = p.tokens * l.price;
+    const profit = income - cost;
+    return {
+      idx: l.idx, label: l.label, price: l.price, income, cost, profit,
+      roi: cost > 0 ? (profit / cost) * 100 : 0,
+      reached: p.price > 0 && p.price >= l.price
+    };
+  });
+}
+
+// Resumen global BLOQUE 1: suma de todas las salidas progresivas de la cartera.
+function computeTpGlobalProgressive() {
   const positions = getPlanPositions().filter((p) => p.tokens > 0);
   let invested = 0, currentValue = 0, totalOut = 0, remainingValue = 0, profit = 0;
-  const phases = [0, 0, 0];
+  const phases = [0, 0, 0, 0, 0];       // ingreso vendido en cada TP
+  const phaseRemain = [0, 0, 0, 0, 0];  // valor aún en cartera tras cada TP
+  const levelUsed = [false, false, false, false, false];
   const rows = [];
+  const noTp = [];
   positions.forEach((p) => {
     const sim = computeTpProgressive(p);
-    invested += p.investment;
+    if (!sim.hasTp) { noTp.push(p); return; }
+    invested += sim.cost;
     currentValue += p.value;
-    if (!sim.hasTp) return;
     totalOut += sim.totalOut;
     remainingValue += sim.remainingValue;
     profit += sim.profit;
-    sim.steps.forEach((s, i) => { if (i < 3) phases[i] += s.income; });
+    const stepByIdx = {};
+    sim.steps.forEach((s) => { stepByIdx[s.idx] = s; phases[s.idx] += s.income; levelUsed[s.idx] = true; });
+    // Reparte el valor restante por fase arrastrando lo que queda del activo.
+    let remTokens = p.tokens;
+    for (let k = 0; k < 5; k++) {
+      if (stepByIdx[k]) remTokens = stepByIdx[k].remaining;
+      if (levelUsed[k] || k < sim.levels.length) phaseRemain[k] += p.price > 0 ? remTokens * p.price : 0;
+    }
     rows.push({ p, sim });
   });
+  const phaseAcc = [];
+  let running = 0;
+  for (let k = 0; k < 5; k++) { running += phases[k]; phaseAcc[k] = running; }
   const estTotal = totalOut + remainingValue;
   const roi = invested > 0 ? ((estTotal - invested) / invested) * 100 : 0;
-  return { invested, currentValue, totalOut, remainingValue, estTotal, profit, roi, phases, rows, count: rows.length };
+  return {
+    invested, currentValue, totalOut, remainingValue, estTotal, profit, roi,
+    phases, phaseAcc, phaseRemain, levelUsed, rows, noTp,
+    count: rows.length, total: positions.length
+  };
+}
+
+// Resumen global BLOQUE 2: vender el 100% de toda la cartera en un único TP.
+function computeTpGlobalFull() {
+  const positions = getPlanPositions().filter((p) => p.tokens > 0);
+  const scenarios = [0, 1, 2, 3, 4].map((k) => ({ idx: k, label: `TP${k + 1}`, total: 0, invested: 0, count: 0 }));
+  positions.forEach((p) => {
+    const cost = tpCost(p);
+    getTpLevels(p).forEach((l) => {
+      const sc = scenarios[l.idx];
+      sc.total += p.tokens * l.price;
+      sc.invested += cost;
+      sc.count += 1;
+    });
+  });
+  return scenarios
+    .filter((sc) => sc.count > 0)
+    .map((sc) => ({
+      ...sc,
+      profit: sc.total - sc.invested,
+      roi: sc.invested > 0 ? ((sc.total - sc.invested) / sc.invested) * 100 : 0
+    }));
 }
 
 /* ── Render de la pestaña (dos sub-herramientas) ── */
@@ -1085,37 +1168,124 @@ function renderTpTool() {
     box.innerHTML = `<div class="panel plan-empty detail-empty"><strong>${escapeHtml(t("tp.emptyTitle"))}</strong><p>${escapeHtml(t("tp.emptyText"))}</p></div>`;
     return;
   }
-  const global = computeTpGlobal();
   const money = (v) => maskedCurrency(v);
+  const prog = computeTpGlobalProgressive();
+  const full = computeTpGlobalFull();
+  const usedLevels = [0, 1, 2, 3, 4].filter((k) => prog.levelUsed[k]);
 
+  // ── BLOQUE 1: resumen global de TP progresivos ──
+  const progPhaseCells = usedLevels
+    .map((k) => `<div><span>${escapeHtml(t("tp.totalIn", { tp: "TP" + (k + 1) }))}</span><b>${money(prog.phases[k])}</b></div>`)
+    .join("");
+  const progTableRows = usedLevels
+    .map((k, i) => `<div class="tpg-row"><span>TP${k + 1}</span><span>${money(prog.phases[k])}</span><span>${money(prog.phaseAcc[k])}</span><span>${money(prog.phaseRemain[k])}</span><span class="tpg-exp">${escapeHtml(i === 0 ? t("tp.expFirst") : t("tp.expNext"))}</span></div>`)
+    .join("");
+  const block1 = `
+    <section class="panel tp-block tp-block-prog">
+      <div class="tp-block-head"><span class="tp-block-badge">1</span><div><h2 class="home-section-title">${escapeHtml(t("tp.progTitle"))}</h2><small>${escapeHtml(t("tp.progSubtitle"))}</small></div></div>
+      ${prog.count ? `
+      <div class="tp-global-grid">
+        <div><span>${escapeHtml(t("tp.grandTotal"))}</span><b>${money(prog.totalOut)}</b></div>
+        <div><span>${escapeHtml(t("tp.profit"))}</span><b class="${prog.profit >= 0 ? "positive" : "negative"}">${maskedSignedCurrency(prog.profit)}</b></div>
+        <div><span>${escapeHtml(t("tp.roi"))}</span><b class="${prog.roi >= 0 ? "positive" : "negative"}">${formatPercent(prog.roi)}</b></div>
+        <div><span>${escapeHtml(t("tp.remainingAfter"))}</span><b>${money(prog.remainingValue)}</b></div>
+        ${progPhaseCells}
+      </div>
+      <div class="tp-global-table tp-table-prog">
+        <div class="tpg-row tpg-head"><span>TP</span><span>${escapeHtml(t("tp.collected"))}</span><span>${escapeHtml(t("tp.accumulated"))}</span><span>${escapeHtml(t("tp.remainValue"))}</span><span>${escapeHtml(t("tp.explanation"))}</span></div>
+        ${progTableRows}
+      </div>` : `<p class="plan-hint">${escapeHtml(t("tp.noneConfigured"))}</p>`}
+    </section>`;
+
+  // ── BLOQUE 2: resumen global de venta 100% en cada TP ──
+  const fullCards = full
+    .map((sc) => `
+      <div class="tp-scenario">
+        <div class="tp-scenario-top"><strong>${escapeHtml(t("tp.sell100at", { tp: sc.label }))}</strong><b>${money(sc.total)}</b></div>
+        <div class="tp-scenario-grid">
+          <div><span>${escapeHtml(t("tp.profit"))}</span><b class="${sc.profit >= 0 ? "positive" : "negative"}">${maskedSignedCurrency(sc.profit)}</b></div>
+          <div><span>${escapeHtml(t("tp.roi"))}</span><b class="${sc.roi >= 0 ? "positive" : "negative"}">${formatPercent(sc.roi)}</b></div>
+        </div>
+      </div>`)
+    .join("");
+  const fullTableRows = full
+    .map((sc) => `<div class="tpg-row"><span>${escapeHtml(t("tp.sell100at", { tp: sc.label }))}</span><span>${money(sc.total)}</span><span class="${sc.profit >= 0 ? "positive" : "negative"}">${maskedSignedCurrency(sc.profit)}</span><span class="${sc.roi >= 0 ? "positive" : "negative"}">${formatPercent(sc.roi)}</span></div>`)
+    .join("");
+  const block2 = `
+    <section class="panel tp-block tp-block-full">
+      <div class="tp-block-head"><span class="tp-block-badge">2</span><div><h2 class="home-section-title">${escapeHtml(t("tp.fullTitle"))}</h2><small>${escapeHtml(t("tp.fullSubtitle"))}</small></div></div>
+      ${full.length ? `
+      <div class="tp-scenarios">${fullCards}</div>
+      <div class="tp-global-table tp-table-full">
+        <div class="tpg-row tpg-head"><span>${escapeHtml(t("tp.scenario"))}</span><span>${escapeHtml(t("tp.estTotal"))}</span><span>${escapeHtml(t("tp.profit"))}</span><span>${escapeHtml(t("tp.roi"))}</span></div>
+        ${fullTableRows}
+      </div>` : `<p class="plan-hint">${escapeHtml(t("tp.noneConfigured"))}</p>`}
+    </section>`;
+
+  // ── BLOQUE 3: tabla comparativa global por activo ──
+  const block3 = prog.count ? `
+    <section class="panel">
+      <div class="panel-heading compact-heading"><h2 class="home-section-title">${escapeHtml(t("tp.compareTitle"))}</h2></div>
+      <div class="tp-global-table tp-table-compare" style="--tp-cols:${usedLevels.length + 2}">
+        <div class="tpg-row tpg-head"><span>${escapeHtml(t("reb.asset"))}</span>${usedLevels.map((k) => `<span>TP${k + 1}</span>`).join("")}<span>${escapeHtml(t("tp.total"))}</span></div>
+        ${prog.rows.map((r) => {
+          const byIdx = {};
+          r.sim.steps.forEach((s) => { byIdx[s.idx] = s.income; });
+          return `<div class="tpg-row"><span>${escapeHtml(r.p.symbol || r.p.name)}</span>${usedLevels.map((k) => `<span>${money(byIdx[k] || 0)}</span>`).join("")}<span>${money(r.sim.totalOut)}</span></div>`;
+        }).join("")}
+      </div>
+    </section>` : "";
+
+  // ── BLOQUE 4-6: detalle por activo ──
   const perAsset = positions.map((p) => {
     const sim = computeTpProgressive(p);
+    const fullA = computeTpFull(p);
     const cfg = getTpConfig(p.id);
-    if (!sim.hasTp) {
-      return `<section class="panel tp-card"><div class="tp-card-head"><span class="asset-avatar">${renderAssetAvatar(p.row)}</span><strong>${escapeHtml(p.name)}</strong></div><p class="plan-hint">${escapeHtml(t("tp.noTargets"))}</p><button class="ghost-btn" type="button" data-tp-edit="${p.id}">${escapeHtml(t("tp.setTargets"))}</button></section>`;
-    }
-    const pctInputs = `
-      <div class="tp-pcts">
-        ${[["p1", "TP1", p.tp1], ["p2", "TP2", p.tp2], ["p3", "TP3", p.tp3]].filter((x) => x[2] > 0).map(([k, lbl]) => `
-          <label>${lbl} %<input type="text" inputmode="decimal" data-tp-field="${k}" data-row-id="${p.id}" value="${cfg[k]}" /></label>`).join("")}
+    const noData = !(p.price > 0);
+
+    const configRows = [
+      { label: "TP1", price: p.tp1, pctKey: "p1", priceKey: null },
+      { label: "TP2", price: p.tp2, pctKey: "p2", priceKey: null },
+      { label: "TP3", price: p.tp3, pctKey: "p3", priceKey: null },
+      { label: "TP4", price: Number(cfg.price4) || 0, pctKey: "p4", priceKey: "price4", optional: true },
+      { label: "TP5", price: Number(cfg.price5) || 0, pctKey: "p5", priceKey: "price5", optional: true }
+    ].map((l) => `
+      <div class="tp-config-row${l.optional ? " is-optional" : ""}">
+        <span class="tp-config-label">${l.label}</span>
+        ${l.priceKey
+          ? `<input class="tp-config-price" type="text" inputmode="decimal" data-tp-price="${l.priceKey}" data-row-id="${p.id}" value="${l.price > 0 ? escapeHtml(formatEditableNumber(l.price)) : ""}" placeholder="${escapeHtml(t("tp.price"))}" />`
+          : `<span class="tp-config-price-ro">${l.price > 0 ? formatCurrency(l.price, getPriceDigits(l.price)) : `<span class="muted">${escapeHtml(t("tp.setInEditor"))}</span>`}</span>`}
+        <span class="tp-config-pct"><input type="text" inputmode="decimal" data-tp-field="${l.pctKey}" data-row-id="${p.id}" value="${planClamp(Number(cfg[l.pctKey]) || 0, 0, 100)}" />%</span>
+      </div>`).join("");
+
+    const head = `
+      <div class="tp-card-head">
+        <span class="asset-avatar">${renderAssetAvatar(p.row)}</span>
+        <div class="tp-card-id"><strong>${escapeHtml(p.name)}</strong><small>${formatNumber(p.tokens, p.tokens >= 1 ? 4 : 8)} · ${escapeHtml(t("tp.avg"))} ${p.avg > 0 ? formatCurrency(p.avg, getPriceDigits(p.avg)) : "--"} · ${escapeHtml(t("tp.now"))} ${p.price > 0 ? formatCurrency(p.price, getPriceDigits(p.price)) : "--"}</small></div>
       </div>`;
+    const configBlock = `<div class="tp-config"><div class="tp-config-legend"><span>${escapeHtml(t("tp.price"))}</span><span>${escapeHtml(t("tp.pctSell"))}</span></div>${configRows}</div>`;
+
+    if (noData) {
+      return `<section class="panel tp-card">${head}${configBlock}<p class="plan-hint tp-warn">${escapeHtml(t("tp.noData"))}</p></section>`;
+    }
+    if (!sim.hasTp) {
+      return `<section class="panel tp-card">${head}${configBlock}<p class="plan-hint">${escapeHtml(t("tp.noTargets"))}</p><button class="ghost-btn" type="button" data-tp-edit="${p.id}">${escapeHtml(t("tp.setTargets"))}</button></section>`;
+    }
+
     const steps = sim.steps.map((s) => `
-      <div class="tp-step">
-        <div class="tp-step-top"><strong>${s.label}</strong><span>${formatCurrency(s.price, getPriceDigits(s.price))} · ${s.pct.toFixed(0)}%</span></div>
+      <div class="tp-step${s.reached ? " tp-step-reached" : ""}">
+        <div class="tp-step-top"><strong>${s.label}</strong><span>${formatCurrency(s.price, getPriceDigits(s.price))} · ${s.pct.toFixed(0)}%${s.reached ? ` <em class="tp-reached-tag">${escapeHtml(t("tp.reachedTag"))}</em>` : ""}</span></div>
         <div class="tp-step-grid">
           <div><span>${escapeHtml(t("tp.sold"))}</span><b>${formatNumber(s.sold, s.sold >= 1 ? 4 : 8)}</b></div>
           <div><span>${escapeHtml(t("tp.remaining"))}</span><b>${formatNumber(s.remaining, s.remaining >= 1 ? 4 : 8)}</b></div>
           <div><span>${escapeHtml(t("tp.income"))}</span><b class="positive">${money(s.income)}</b></div>
         </div>
       </div>`).join("");
-    const full = sim.full.map((f) => `<div><span>${f.label} 100%</span><b>${money(f.income)}</b></div>`).join("");
+    const fullRows = fullA.map((f) => `<div><span>${f.label} 100%${f.reached ? ` <em class="tp-reached-tag">${escapeHtml(t("tp.reachedTag"))}</em>` : ""}</span><b>${money(f.income)}</b><small class="${f.roi >= 0 ? "positive" : "negative"}">${formatPercent(f.roi)}</small></div>`).join("");
     return `
       <section class="panel tp-card">
-        <div class="tp-card-head">
-          <span class="asset-avatar">${renderAssetAvatar(p.row)}</span>
-          <div class="tp-card-id"><strong>${escapeHtml(p.name)}</strong><small>${formatNumber(p.tokens, p.tokens >= 1 ? 4 : 8)} · ${escapeHtml(t("tp.avg"))} ${p.avg > 0 ? formatCurrency(p.avg, getPriceDigits(p.avg)) : "--"} · ${escapeHtml(t("tp.now"))} ${p.price > 0 ? formatCurrency(p.price, getPriceDigits(p.price)) : "--"}</small></div>
-        </div>
-        ${pctInputs}
+        ${head}
+        ${configBlock}
         <div class="tp-steps">${steps}</div>
         <div class="tp-summary">
           <div><span>${escapeHtml(t("tp.totalOut"))}</span><b>${money(sim.totalOut)}</b></div>
@@ -1123,30 +1293,22 @@ function renderTpTool() {
           <div><span>${escapeHtml(t("tp.profit"))}</span><b class="${sim.profit >= 0 ? "positive" : "negative"}">${maskedSignedCurrency(sim.profit)}</b></div>
           <div><span>${escapeHtml(t("tp.roi"))}</span><b class="${sim.roi >= 0 ? "positive" : "negative"}">${formatPercent(sim.roi)}</b></div>
         </div>
-        <div class="tp-full"><span class="tp-full-label">${escapeHtml(t("tp.full100"))}</span>${full}</div>
+        <div class="tp-full"><span class="tp-full-label">${escapeHtml(t("tp.full100"))}</span><div class="tp-full-grid">${fullRows}</div></div>
       </section>`;
   }).join("");
 
+  // ── BLOQUE 7: avisos de activos sin TP ──
+  const noTpNotice = prog.noTp.length
+    ? `<section class="panel tp-notice"><strong>${escapeHtml(t("tp.noTpTitle"))}</strong><p class="plan-hint">${prog.noTp.map((p) => escapeHtml(p.symbol || p.name)).join(" · ")}</p></section>`
+    : "";
+
   box.innerHTML = `
-    <section class="panel tp-global">
-      <div class="panel-heading compact-heading"><h2 class="home-section-title">${escapeHtml(t("tp.globalTitle"))}</h2></div>
-      <div class="tp-global-grid">
-        <div><span>${escapeHtml(t("tp.invested"))}</span><b>${money(global.invested)}</b></div>
-        <div><span>${escapeHtml(t("tp.current"))}</span><b>${money(global.currentValue)}</b></div>
-        <div><span>${escapeHtml(t("tp.estTotal"))}</span><b>${money(global.estTotal)}</b></div>
-        <div><span>${escapeHtml(t("tp.profit"))}</span><b class="${global.profit >= 0 ? "positive" : "negative"}">${maskedSignedCurrency(global.profit)}</b></div>
-        <div><span>${escapeHtml(t("tp.roi"))}</span><b class="${global.roi >= 0 ? "positive" : "negative"}">${formatPercent(global.roi)}</b></div>
-        <div><span>${escapeHtml(t("tp.tp1total"))}</span><b>${money(global.phases[0])}</b></div>
-        <div><span>${escapeHtml(t("tp.tp2total"))}</span><b>${money(global.phases[1])}</b></div>
-        <div><span>${escapeHtml(t("tp.tp3total"))}</span><b>${money(global.phases[2])}</b></div>
-      </div>
-      ${global.count ? `
-      <div class="tp-global-table">
-        <div class="tpg-row tpg-head"><span>${escapeHtml(t("reb.asset"))}</span><span>TP1</span><span>TP2</span><span>TP3</span><span>${escapeHtml(t("tp.total"))}</span></div>
-        ${global.rows.map((r) => `<div class="tpg-row"><span>${escapeHtml(r.p.symbol || r.p.name)}</span><span>${money(r.sim.steps[0]?.income || 0)}</span><span>${money(r.sim.steps[1]?.income || 0)}</span><span>${money(r.sim.steps[2]?.income || 0)}</span><span>${money(r.sim.totalOut)}</span></div>`).join("")}
-      </div>` : `<p class="plan-hint">${escapeHtml(t("tp.noneConfigured"))}</p>`}
-    </section>
+    ${block1}
+    ${block2}
+    ${block3}
+    <div class="tp-detail-head"><h2 class="home-section-title">${escapeHtml(t("tp.detailTitle"))}</h2></div>
     ${perAsset}
+    ${noTpNotice}
     <p class="plan-disclaimer">${escapeHtml(PLAN_DISCLAIMER)}</p>
   `;
 }
@@ -1180,10 +1342,17 @@ function bindPlan() {
     if (action) handlePlanAction(action);
   });
 
-  box.addEventListener("input", (event) => {
+  // Commit en "change" (blur/enter) para no perder el foco mientras se escribe.
+  box.addEventListener("change", (event) => {
     const tpField = event.target.closest("[data-tp-field]");
     if (tpField) {
       setTpConfig(tpField.dataset.rowId, { [tpField.dataset.tpField]: planClamp(parseDecimal(tpField.value), 0, 100) });
+      renderTpTool();
+      return;
+    }
+    const tpPrice = event.target.closest("[data-tp-price]");
+    if (tpPrice) {
+      setTpConfig(tpPrice.dataset.rowId, { [tpPrice.dataset.tpPrice]: Math.max(0, parseDecimal(tpPrice.value)) });
       renderTpTool();
     }
   });
