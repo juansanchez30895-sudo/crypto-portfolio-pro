@@ -7,6 +7,7 @@ const DATA_SCHEMA_VERSION = 1;
 // el cache se invalida solo cuando cambia algún dato de la fila.
 // OJO: debe declararse antes de la llamada a init() (línea ~350).
 const rowMetricsMemo = new WeakMap();
+const MAX_TRADES = 1000;
 const PREFS_KEY = "crypto-dashboard-prefs-v2";
 const HISTORY_KEY = "crypto-dashboard-history-v2";
 const FX_RATE_CACHE_KEY = "crypto-dashboard-fx-v1";
@@ -242,6 +243,9 @@ const state = {
   rows: [],
   prefs: { ...DEFAULT_PREFS },
   activity: [],
+  // Libro de operaciones estructurado (compras/ventas): alimenta el PnL
+  // realizado y la analítica de actividad mensual. Tope MAX_TRADES.
+  trades: [],
   history: [],
   autosaveTimer: null,
   autoRefreshTimer: null,
@@ -920,6 +924,7 @@ function applyRebalance(result) {
     row.investment = formatEditableNumber(newInv);
     row.entryPrice = newTokens > 0 ? formatEditableNumber(newInv / newTokens) : "";
     row.derivedField = "";
+    recordTrade({ type: "buy", rowId: row.id, symbol: row.symbol || row.crypto, tokens: it.alloc / it.price, price: it.price, amount: it.alloc });
     n += 1;
   });
   if (!n) return;
@@ -1608,6 +1613,41 @@ function closeTradeSheet() {
   }, 200);
 }
 
+// Registra una operación estructurada (compra/venta) para PnL realizado
+// y analítica de actividad. `realized` solo aplica a ventas.
+function recordTrade(entry) {
+  state.trades.unshift({
+    id: `trade-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    at: Date.now(),
+    ...entry
+  });
+  if (state.trades.length > MAX_TRADES) state.trades.length = MAX_TRADES;
+}
+
+// PnL realizado acumulado (suma de las ventas registradas).
+function getRealizedPnl() {
+  return state.trades.reduce((s, tr) => s + (tr.type === "sell" && Number.isFinite(tr.realized) ? tr.realized : 0), 0);
+}
+
+// Agregado mensual de compras/ventas para la analítica de actividad.
+function getMonthlyTradeStats(monthsBack = 6) {
+  const now = new Date();
+  const months = [];
+  for (let i = monthsBack - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push({ key: `${d.getFullYear()}-${d.getMonth()}`, label: d.toLocaleDateString(UI_LOCALES[state.prefs.language] || "es-ES", { month: "short", year: "2-digit" }), buys: 0, sells: 0, buyCount: 0, sellCount: 0 });
+  }
+  const byKey = new Map(months.map((m) => [m.key, m]));
+  state.trades.forEach((tr) => {
+    const d = new Date(tr.at);
+    const m = byKey.get(`${d.getFullYear()}-${d.getMonth()}`);
+    if (!m) return;
+    if (tr.type === "buy") { m.buys += tr.amount || 0; m.buyCount += 1; }
+    else if (tr.type === "sell") { m.sells += tr.amount || 0; m.sellCount += 1; }
+  });
+  return months;
+}
+
 function confirmTrade(sheet) {
   const mode = sheet.querySelector("form").dataset.tradeMode;
   const row = getRowById(sheet.querySelector("[data-trade-field='rowId']").value);
@@ -1637,22 +1677,32 @@ function confirmTrade(sheet) {
   const curInvestment = parseDecimal(row.investment);
 
   if (mode === "buy") {
-    const addInvestment = addTokens * (price > 0 ? price : (curTokens > 0 ? curInvestment / curTokens : 0));
+    const unitPrice = price > 0 ? price : (curTokens > 0 ? curInvestment / curTokens : 0);
+    const addInvestment = addTokens * unitPrice;
     const newTokens = curTokens + addTokens;
     const newInvestment = curInvestment + addInvestment;
     row.tokens = formatEditableNumber(newTokens);
     row.investment = formatEditableNumber(newInvestment);
     row.entryPrice = newTokens > 0 ? formatEditableNumber(newInvestment / newTokens) : "";
     row.derivedField = "";
+    recordTrade({ type: "buy", rowId: row.id, symbol: row.symbol || row.crypto, tokens: addTokens, price: unitPrice, amount: addInvestment });
     finishTrade(row, t("trade.buySaved", { tokens: formatNumber(addTokens, 6), asset: assetDisplayName(row) }));
   } else {
     // Venta: mantiene el coste medio y reduce la base proporcionalmente.
     const avgCost = curTokens > 0 ? curInvestment / curTokens : 0;
+    const soldTokens = Math.min(addTokens, curTokens);
     const newTokens = Math.max(0, curTokens - addTokens);
     row.tokens = newTokens > 0 ? formatEditableNumber(newTokens) : "";
     row.investment = newTokens > 0 ? formatEditableNumber(newTokens * avgCost) : "";
     row.entryPrice = newTokens > 0 ? formatEditableNumber(avgCost) : "";
     row.derivedField = "";
+    // Precio de venta: el indicado o, si falta, el precio actual conocido.
+    const sellPrice = price > 0 ? price : (typeof row.currentPrice === "number" ? row.currentPrice : 0);
+    recordTrade({
+      type: "sell", rowId: row.id, symbol: row.symbol || row.crypto,
+      tokens: soldTokens, price: sellPrice, amount: soldTokens * sellPrice,
+      realized: sellPrice > 0 && avgCost > 0 ? soldTokens * (sellPrice - avgCost) : null
+    });
     finishTrade(row, t("trade.sellSaved", { tokens: formatNumber(addTokens, 6), asset: assetDisplayName(row) }));
   }
 }
@@ -2542,6 +2592,7 @@ function loadState() {
     : DEFAULT_ROWS.map((row) => createRow(row));
 
   state.activity = Array.isArray(payload?.activity) ? payload.activity.slice(0, MAX_ACTIVITY_ITEMS) : [];
+  state.trades = Array.isArray(payload?.trades) ? payload.trades.slice(0, MAX_TRADES) : [];
   state.history = Array.isArray(history?.points) ? compactHistoryPoints(history.points) : [];
   state.prefs = {
     ...DEFAULT_PREFS,
@@ -3799,8 +3850,19 @@ function renderAnalyticsSummary(snapshot) {
   const riskLabels = { low: t("analytics.riskLow"), medium: t("analytics.riskMedium"), high: t("analytics.riskHigh") };
   const riskTones = { low: "positive", medium: "warning", high: "negative" };
 
+  const realized = getRealizedPnl();
+  const totalWithRealized = totalPnl + realized;
+  const assetCount = state.rows.filter((r) => r.crypto.trim()).length;
+
   const pct = (value) => (value == null ? "--" : formatSignedPercent(value));
   const stats = [
+    { label: t("analytics.totalValue"), value: maskedCurrency(snapshot.totals.currentValue), tone: "" },
+    { label: t("analytics.invested"), value: maskedCurrency(snapshot.totals.investment), tone: "" },
+    { label: t("analytics.unrealizedPnl"), value: maskedSignedCurrency(totalPnl), tone: toneClass(totalPnl) },
+    { label: t("analytics.realizedPnl"), value: state.trades.some((tr) => tr.type === "sell") ? maskedSignedCurrency(realized) : "--", tone: realized ? toneClass(realized) : "" },
+    { label: t("analytics.totalPnl"), value: maskedSignedCurrency(totalWithRealized), tone: toneClass(totalWithRealized) },
+    { label: t("analytics.nAssets"), value: String(assetCount), tone: "" },
+    { label: t("analytics.nTrades"), value: String(state.trades.length), tone: "" },
     { label: t("analytics.roi"), value: pct(roi), tone: roi != null ? toneClass(roi) : "" },
     { label: t("analytics.ret24h"), value: change24h ? formatSignedPercent(change24h.pct) : "--", tone: change24h ? toneClass(change24h.pct) : "" },
     { label: t("analytics.ret7d"), value: pct(ret7d), tone: ret7d != null ? toneClass(ret7d) : "" },
@@ -3874,10 +3936,90 @@ function setAnalyticsTab(atab) {
 // Comparativa 24h, reparto por categoría, tabla de concentración y riesgo.
 function renderAnalyticsExtras(snapshot) {
   renderAnalyticsBestWorst(snapshot);
+  renderAnalyticsAvgTable(snapshot);
   renderAnalyticsCompare(snapshot);
   renderAnalyticsCategory(snapshot);
   renderAnalyticsConcentration(snapshot);
   renderAnalyticsRisk(snapshot);
+  renderAnalyticsActivityStats();
+}
+
+// Precio medio vs actual: distancia al break-even y pista de acumulación.
+function renderAnalyticsAvgTable(snapshot) {
+  const box = document.getElementById("analyticsAvgTable");
+  if (!box) return;
+  const totalValue = snapshot.totals.currentValue || 1;
+  const rows = snapshot.items
+    .filter((i) => i.metrics.tokens > 0 && i.metrics.entryPrice > 0)
+    .map((i) => {
+      const m = i.metrics;
+      const weight = (m.currentValue / totalValue) * 100;
+      const dist = m.currentPrice > 0 ? ((m.currentPrice - m.entryPrice) / m.entryPrice) * 100 : null;
+      // Pista: por debajo de media con peso contenido → candidato a promediar;
+      // por debajo pero ya pesado → promediar aumenta el riesgo.
+      let hint = "";
+      let hintTone = "";
+      if (dist != null && dist < -3) {
+        if (weight < 25) { hint = t("analytics.avgCandidate"); hintTone = "positive"; }
+        else { hint = t("analytics.avgTooHeavy"); hintTone = "warning"; }
+      } else if (dist == null) {
+        hint = t("analytics.noPrice");
+        hintTone = "warning";
+      }
+      return { i, m, weight, dist, hint, hintTone };
+    })
+    .sort((a, b) => (a.dist ?? 999) - (b.dist ?? 999));
+
+  if (!rows.length) {
+    box.innerHTML = `<p class="movers-empty">${escapeHtml(t("home.noData"))}</p>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="avg-row avg-head">
+      <span>${escapeHtml(t("reb.asset"))}</span><span>${escapeHtml(t("tp.avg"))}</span><span>${escapeHtml(t("tp.now"))}</span><span>${escapeHtml(t("analytics.distance"))}</span><span>${escapeHtml(t("reb.weight"))}</span>
+    </div>
+    ${rows.map((r) => `
+      <div class="avg-row">
+        <span class="avg-asset"><span class="asset-avatar">${renderAssetAvatar(r.i.row)}</span>${escapeHtml(r.i.row.symbol || assetDisplayName(r.i.row))}</span>
+        <span>${formatCurrency(r.m.entryPrice, getPriceDigits(r.m.entryPrice))}</span>
+        <span>${r.m.currentPrice > 0 ? formatCurrency(r.m.currentPrice, getPriceDigits(r.m.currentPrice)) : "--"}</span>
+        <span class="${r.dist != null ? toneClass(r.dist) : ""}">${r.dist != null ? formatSignedPercent(r.dist) : "--"}</span>
+        <span>${r.weight.toFixed(1)}%</span>
+        ${r.hint ? `<small class="avg-hint ${r.hintTone}">${escapeHtml(r.hint)}</small>` : ""}
+      </div>`).join("")}
+  `;
+}
+
+// Actividad mensual: compras/ventas por mes + acumulados (desde el ledger).
+function renderAnalyticsActivityStats() {
+  const box = document.getElementById("analyticsActivityStats");
+  if (!box) return;
+  if (!state.trades.length) {
+    box.innerHTML = `<p class="movers-empty">${escapeHtml(t("analytics.noTrades"))}</p>`;
+    return;
+  }
+  const months = getMonthlyTradeStats(6);
+  const totalBuys = state.trades.reduce((s, tr) => s + (tr.type === "buy" ? tr.amount || 0 : 0), 0);
+  const totalSells = state.trades.reduce((s, tr) => s + (tr.type === "sell" ? tr.amount || 0 : 0), 0);
+  const maxVal = Math.max(1, ...months.map((m) => Math.max(m.buys, m.sells)));
+  box.innerHTML = `
+    <div class="acts-totals">
+      <div><span>${escapeHtml(t("analytics.totalBuys"))}</span><b>${maskedCurrency(totalBuys)}</b></div>
+      <div><span>${escapeHtml(t("analytics.totalSells"))}</span><b>${maskedCurrency(totalSells)}</b></div>
+      <div><span>${escapeHtml(t("analytics.realizedPnl"))}</span><b class="${toneClass(getRealizedPnl())}">${maskedSignedCurrency(getRealizedPnl())}</b></div>
+    </div>
+    <div class="acts-months">
+      ${months.map((m) => `
+        <div class="acts-month">
+          <div class="acts-bars">
+            <span class="acts-bar buy" style="height:${Math.max(2, (m.buys / maxVal) * 48)}px" title="${escapeHtml(t("analytics.buys"))}: ${formatCurrency(m.buys)}"></span>
+            <span class="acts-bar sell" style="height:${Math.max(2, (m.sells / maxVal) * 48)}px" title="${escapeHtml(t("analytics.sells"))}: ${formatCurrency(m.sells)}"></span>
+          </div>
+          <small>${escapeHtml(m.label)}</small>
+        </div>`).join("")}
+    </div>
+    <div class="acts-legend"><span class="buy">■ ${escapeHtml(t("analytics.buys"))}</span><span class="sell">■ ${escapeHtml(t("analytics.sells"))}</span></div>
+  `;
 }
 
 function renderAnalyticsBestWorst(snapshot) {
@@ -7551,7 +7693,8 @@ function persistState(manual) {
         personalLabel: row.personalLabel,
         alertsFired: row.alertsFired
       })),
-      activity: state.activity.slice(0, MAX_ACTIVITY_ITEMS)
+      activity: state.activity.slice(0, MAX_ACTIVITY_ITEMS),
+      trades: state.trades.slice(0, MAX_TRADES)
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
