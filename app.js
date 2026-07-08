@@ -890,8 +890,8 @@ function applyRebalance(result) {
 
 /* ── Simulador de Take Profits ── */
 function getTpConfig(rowId) {
-  // TP1-TP3: precio en la fila (editor/CSV) + % aquí. TP4/TP5: precio y % solo aquí.
-  const def = { p1: 30, p2: 50, p3: 100, p4: 0, p5: 0, price4: 0, price5: 0 };
+  // Precio del TP en la fila (editor/CSV); % de venta aquí.
+  const def = { p1: 30, p2: 50, p3: 100 };
   return { ...def, ...((state.plan.tp || {})[rowId] || {}) };
 }
 function setTpConfig(rowId, patch) {
@@ -905,16 +905,13 @@ function tpCost(p) {
   return p.investment > 0 ? p.investment : p.tokens * p.avg;
 }
 
-// Devuelve los niveles TP configurados (hasta 5), en orden, sólo con precio > 0.
-// TP1-TP3 toman el precio de la fila; TP4/TP5 del config del simulador.
+// Devuelve los niveles TP configurados (TP1-TP3), en orden, sólo con precio > 0.
 function getTpLevels(p) {
   const cfg = getTpConfig(p.id);
   const raw = [
     { price: p.tp1, pct: cfg.p1 },
     { price: p.tp2, pct: cfg.p2 },
-    { price: p.tp3, pct: cfg.p3 },
-    { price: Number(cfg.price4) || 0, pct: cfg.p4 },
-    { price: Number(cfg.price5) || 0, pct: cfg.p5 }
+    { price: p.tp3, pct: cfg.p3 }
   ];
   return raw
     .map((l, idx) => ({
@@ -975,9 +972,9 @@ function computeTpFull(p) {
 function computeTpGlobalProgressive() {
   const positions = getPlanPositions().filter((p) => p.tokens > 0);
   let invested = 0, currentValue = 0, totalOut = 0, remainingValue = 0, profit = 0;
-  const phases = [0, 0, 0, 0, 0];       // ingreso vendido en cada TP
-  const phaseRemain = [0, 0, 0, 0, 0];  // valor aún en cartera tras cada TP
-  const levelUsed = [false, false, false, false, false];
+  const phases = [0, 0, 0];       // ingreso vendido en cada TP
+  const phaseRemain = [0, 0, 0];  // valor aún en cartera tras cada TP
+  const levelUsed = [false, false, false];
   const rows = [];
   const noTp = [];
   positions.forEach((p) => {
@@ -992,7 +989,7 @@ function computeTpGlobalProgressive() {
     sim.steps.forEach((s) => { stepByIdx[s.idx] = s; phases[s.idx] += s.income; levelUsed[s.idx] = true; });
     // Reparte el valor restante por fase arrastrando lo que queda del activo.
     let remTokens = p.tokens;
-    for (let k = 0; k < 5; k++) {
+    for (let k = 0; k < 3; k++) {
       if (stepByIdx[k]) remTokens = stepByIdx[k].remaining;
       if (levelUsed[k] || k < sim.levels.length) phaseRemain[k] += p.price > 0 ? remTokens * p.price : 0;
     }
@@ -1000,7 +997,7 @@ function computeTpGlobalProgressive() {
   });
   const phaseAcc = [];
   let running = 0;
-  for (let k = 0; k < 5; k++) { running += phases[k]; phaseAcc[k] = running; }
+  for (let k = 0; k < 3; k++) { running += phases[k]; phaseAcc[k] = running; }
   const estTotal = totalOut + remainingValue;
   const roi = invested > 0 ? ((estTotal - invested) / invested) * 100 : 0;
   return {
@@ -1013,7 +1010,7 @@ function computeTpGlobalProgressive() {
 // Resumen global BLOQUE 2: vender el 100% de toda la cartera en un único TP.
 function computeTpGlobalFull() {
   const positions = getPlanPositions().filter((p) => p.tokens > 0);
-  const scenarios = [0, 1, 2, 3, 4].map((k) => ({ idx: k, label: `TP${k + 1}`, total: 0, invested: 0, count: 0 }));
+  const scenarios = [0, 1, 2].map((k) => ({ idx: k, label: `TP${k + 1}`, total: 0, invested: 0, count: 0 }));
   positions.forEach((p) => {
     const cost = tpCost(p);
     getTpLevels(p).forEach((l) => {
@@ -1171,7 +1168,7 @@ function renderTpTool() {
   const money = (v) => maskedCurrency(v);
   const prog = computeTpGlobalProgressive();
   const full = computeTpGlobalFull();
-  const usedLevels = [0, 1, 2, 3, 4].filter((k) => prog.levelUsed[k]);
+  const usedLevels = [0, 1, 2].filter((k) => prog.levelUsed[k]);
 
   // ── BLOQUE 1: resumen global de TP progresivos ──
   const progPhaseCells = usedLevels
@@ -1243,14 +1240,12 @@ function renderTpTool() {
     const cfg = getTpConfig(p.id);
     const noData = !(p.price > 0);
 
-    // TP1-3: precio en la fila (data-tp-rowprice). TP4/5: precio en config (data-tp-price).
-    // Mostrar solo los TP con precio + un único slot para añadir el siguiente.
+    // Solo TP1-TP3 (precio en la fila). Se muestran los TP con precio
+    // + un único slot vacío para añadir el siguiente.
     const levelDefs = [
-      { key: "tp1", label: "TP1", raw: p.row.tp1, price: p.tp1, pctKey: "p1", kind: "row" },
-      { key: "tp2", label: "TP2", raw: p.row.tp2, price: p.tp2, pctKey: "p2", kind: "row" },
-      { key: "tp3", label: "TP3", raw: p.row.tp3, price: p.tp3, pctKey: "p3", kind: "row" },
-      { key: "price4", label: "TP4", price: Number(cfg.price4) || 0, pctKey: "p4", kind: "cfg" },
-      { key: "price5", label: "TP5", price: Number(cfg.price5) || 0, pctKey: "p5", kind: "cfg" }
+      { key: "tp1", label: "TP1", raw: p.row.tp1, price: p.tp1, pctKey: "p1" },
+      { key: "tp2", label: "TP2", raw: p.row.tp2, price: p.tp2, pctKey: "p2" },
+      { key: "tp3", label: "TP3", raw: p.row.tp3, price: p.tp3, pctKey: "p3" }
     ];
     let addShown = false;
     const display = [];
@@ -1258,21 +1253,15 @@ function renderTpTool() {
       if (l.price > 0) display.push({ ...l, isAdd: false });
       else if (!addShown) { display.push({ ...l, isAdd: true }); addShown = true; }
     });
-    const configRows = display.map((l) => {
-      const val = l.kind === "row"
-        ? escapeHtml(l.raw || "")
-        : (l.price > 0 ? escapeHtml(formatEditableNumber(l.price)) : "");
-      const priceAttr = l.kind === "row" ? "data-tp-rowprice" : "data-tp-price";
-      return `
-      <div class="tp-config-row${l.kind === "cfg" ? " is-optional" : ""}${l.isAdd ? " is-add" : ""}">
+    const configRows = display.map((l) => `
+      <div class="tp-config-row${l.isAdd ? " is-add" : ""}">
         <span class="tp-config-label">${l.label}</span>
-        <input class="tp-config-price" type="text" inputmode="decimal" ${priceAttr}="${l.key}" data-row-id="${p.id}" value="${val}" placeholder="${escapeHtml(t("tp.price"))}" />
+        <input class="tp-config-price" type="text" inputmode="decimal" data-tp-rowprice="${l.key}" data-row-id="${p.id}" value="${escapeHtml(l.raw || "")}" placeholder="${escapeHtml(t("tp.price"))}" />
         <span class="tp-config-pct"><input type="text" inputmode="decimal" data-tp-field="${l.pctKey}" data-row-id="${p.id}" value="${planClamp(Number(cfg[l.pctKey]) || 0, 0, 100)}" />%</span>
         ${l.isAdd
           ? `<span class="tp-config-del-spacer" aria-hidden="true"></span>`
           : `<button class="tp-config-del" type="button" data-tp-del="${l.key}" data-row-id="${p.id}" aria-label="${escapeHtml(t("tp.deleteLevel"))}" title="${escapeHtml(t("tp.deleteLevel"))}">✕</button>`}
-      </div>`;
-    }).join("");
+      </div>`).join("");
 
     const head = `
       <div class="tp-card-head">
@@ -1368,13 +1357,13 @@ function bindPlan() {
     if (preset) { const i = document.getElementById("rebAmount"); if (i) i.value = preset.dataset.rebPreset; return; }
     const tpDel = event.target.closest("[data-tp-del]");
     if (tpDel) {
+      const r = getRowById(tpDel.dataset.rowId);
       const key = tpDel.dataset.tpDel;
-      const rid = tpDel.dataset.rowId;
-      if (key === "tp1" || key === "tp2" || key === "tp3") {
-        const r = getRowById(rid);
-        if (r) { r[key] = ""; if (r.alertsFired) r.alertsFired[key] = false; persistState(true); updateLiveRowUi(r.id); }
-      } else {
-        setTpConfig(rid, { [key]: 0 });
+      if (r && (key === "tp1" || key === "tp2" || key === "tp3")) {
+        r[key] = "";
+        if (r.alertsFired) r.alertsFired[key] = false;
+        persistState(true);
+        updateLiveRowUi(r.id);
       }
       renderTpTool();
       return;
@@ -1390,12 +1379,6 @@ function bindPlan() {
     const tpField = event.target.closest("[data-tp-field]");
     if (tpField) {
       setTpConfig(tpField.dataset.rowId, { [tpField.dataset.tpField]: planClamp(parseDecimal(tpField.value), 0, 100) });
-      renderTpTool();
-      return;
-    }
-    const tpPrice = event.target.closest("[data-tp-price]");
-    if (tpPrice) {
-      setTpConfig(tpPrice.dataset.rowId, { [tpPrice.dataset.tpPrice]: Math.max(0, parseDecimal(tpPrice.value)) });
       renderTpTool();
       return;
     }
