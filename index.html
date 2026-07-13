@@ -180,8 +180,8 @@
             <span data-i18n="quick.sell">Vender</span>
           </button>
           <button class="quick-action" type="button" data-quick="plan">
-            <span class="qa-icon accent2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 8l7-4 7 4"/><path d="M5 8l-2 5a3 3 0 0 0 6 0z"/><path d="M19 8l-2 5a3 3 0 0 0 6 0z"/></svg></span>
-            <span data-i18n="quick.plan">Rebalanceo</span>
+            <span class="qa-icon accent2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg></span>
+            <span data-i18n="quick.plan">Plan</span>
           </button>
         </section>
 
@@ -206,38 +206,26 @@
       <header class="home-header">
         <div class="home-header-main">
           <p class="portfolio-name-display" data-i18n="nav.analytics">Analitica</p>
+          <p class="home-status" data-i18n="analytics.subtitle">Rendimiento, distribucion y evolucion de tu cartera</p>
         </div>
       </header>
 
-      <nav class="sub-tabs" id="analyticsTabs" role="tablist">
-        <button class="sub-tab is-active" type="button" role="tab" data-atab="summary" data-i18n="analytics.tabSummary">Resumen</button>
-        <button class="sub-tab" type="button" role="tab" data-atab="performance" data-i18n="analytics.tabPerformance">Rendimiento</button>
-        <button class="sub-tab" type="button" role="tab" data-atab="distribution" data-i18n="analytics.tabDistribution">Distribucion</button>
-        <button class="sub-tab" type="button" role="tab" data-atab="risk" data-i18n="analytics.tabRisk">Riesgo</button>
-        <button class="sub-tab" type="button" role="tab" data-atab="activity" data-i18n="analytics.tabActivity">Actividad</button>
-      </nav>
-
-      <!-- Resumen -->
-      <div class="atab-group" data-atab="summary">
+      <!-- Vista única: todos los bloques en la misma pantalla -->
+      <div class="analytics-view">
+        <!-- Resumen: valor, invertido, B/P, rendimiento -->
         <section class="panel analytics-summary-panel">
           <div class="panel-heading compact-heading">
             <h2 class="home-section-title" data-i18n="analytics.summaryTitle">Resumen del rendimiento</h2>
           </div>
           <div id="analyticsSummaryGrid" class="analytics-summary-grid"></div>
         </section>
+
+        <!-- Mejor y peor activo -->
         <section class="panel">
           <div id="analyticsBestWorst" class="best-worst-grid"></div>
         </section>
-        <section class="panel">
-          <div class="panel-heading compact-heading">
-            <h2 class="home-section-title" data-i18n="analytics.avgTitle">Precio medio y acumulacion</h2>
-          </div>
-          <div id="analyticsAvgTable" class="avg-table"></div>
-        </section>
-      </div>
 
-      <!-- Rendimiento -->
-      <div class="atab-group" data-atab="performance" hidden>
+        <!-- Evolución del portafolio -->
         <section class="panel charts-panel" id="chartsPanel">
           <article class="chart-card">
             <div class="chart-head">
@@ -270,6 +258,7 @@
           </article>
         </section>
 
+        <!-- Comparativa 24h -->
         <section class="panel">
           <div class="panel-heading compact-heading">
             <h2 class="home-section-title" data-i18n="analytics.vsTitle">Comparativa 24h vs BTC y ETH</h2>
@@ -277,6 +266,7 @@
           <div id="analyticsCompare" class="compare-block"></div>
         </section>
 
+        <!-- Insights -->
         <section class="panel insights-panel">
           <div class="panel-heading compact-heading">
             <h2 class="home-section-title" data-i18n="insights.title">Insights del Portafolio</h2>
@@ -284,11 +274,7 @@
           <div id="insightsRankingsGrid" class="insights-rankings-grid"></div>
         </section>
 
-        <button id="toggleChartsBtn" class="hidden" type="button" aria-hidden="true"></button>
-      </div>
-
-      <!-- Distribución -->
-      <div class="atab-group" data-atab="distribution" hidden>
+        <!-- Distribución por activos -->
         <section class="panel">
           <div class="panel-heading compact-heading">
             <h2 class="home-section-title" data-i18n="charts.portfolioDistribution">Distribucion del portafolio</h2>
@@ -310,29 +296,21 @@
           </div>
           <div id="analyticsConcentration" class="concentration-block"></div>
         </section>
-      </div>
 
-      <!-- Riesgo -->
-      <div class="atab-group" data-atab="risk" hidden>
+        <!-- Riesgo -->
         <section class="panel">
           <div id="analyticsRisk" class="risk-block"></div>
         </section>
-      </div>
 
-      <!-- Actividad -->
-      <div class="atab-group" data-atab="activity" hidden>
+        <!-- Historial resumido de compras y ventas -->
         <section class="panel">
           <div class="panel-heading compact-heading">
             <h2 class="home-section-title" data-i18n="analytics.activityStats">Compras y ventas por mes</h2>
           </div>
           <div id="analyticsActivityStats" class="acts-block"></div>
         </section>
-        <section class="panel activity-panel">
-          <div class="panel-heading compact-heading">
-            <h2 class="home-section-title" data-i18n="activity.title">Historial simple</h2>
-          </div>
-          <div id="activityList" class="activity-list"></div>
-        </section>
+
+        <button id="toggleChartsBtn" class="hidden" type="button" aria-hidden="true"></button>
       </div>
 
       </section>
@@ -391,27 +369,14 @@
         <header class="home-header">
           <div class="home-header-main">
             <p class="portfolio-name-display" data-i18n="nav.markets">Mercados</p>
+            <p class="home-status" data-i18n="markets.subtitle">Datos reales de CoinGecko, ordenables por columna</p>
           </div>
         </header>
-
-        <section class="market-section">
-          <div id="marketsTopGrid" class="market-grid"></div>
-        </section>
-
-        <section class="panel">
-          <div class="markets-movers" id="marketsMovers"></div>
-        </section>
 
         <section class="panel markets-ranking-panel">
           <div class="markets-search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
             <input id="marketsSearchInput" type="search" autocomplete="off" placeholder="Buscar activo..." data-i18n-placeholder="markets.search" aria-label="Buscar activo" data-i18n-aria-label="markets.search" />
-          </div>
-
-          <div class="markets-tabs" id="marketsTabs" role="tablist">
-            <button class="markets-tab is-active" type="button" role="tab" data-markets-tab="top" data-i18n="markets.topCap">Top por capitalizacion</button>
-            <button class="markets-tab" type="button" role="tab" data-markets-tab="fav" data-i18n="markets.favorites">Favoritos</button>
-            <button class="markets-tab" type="button" role="tab" data-markets-tab="meme" data-i18n="markets.meme">Meme Coins</button>
           </div>
 
           <div id="marketsRanking" class="markets-ranking"></div>
@@ -424,7 +389,7 @@
         <header class="home-header">
           <div class="home-header-main">
             <p class="portfolio-name-display" data-i18n="nav.plan">Plan</p>
-            <p class="home-status" data-i18n="plan.subtitle">Objetivo, estrategia y aportaciones</p>
+            <p class="home-status" data-i18n="plan.subtitle">Simulador de take profit</p>
           </div>
         </header>
 

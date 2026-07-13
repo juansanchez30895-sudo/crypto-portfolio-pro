@@ -79,20 +79,13 @@ const MAX_ROW_HISTORY_POINTS = 240;
 const AUTO_REFRESH_OPTIONS = [300, 1800, 3600, 86400];
 // Datos de mercado globales (widgets de Inicio)
 const MARKET_CACHE_KEY = "crypto-dashboard-market-v1";
-const MARKETS_LIST_KEY = "crypto-dashboard-markets-list-v1";
+const MARKETS_LIST_KEY = "crypto-dashboard-markets-list-v3";
 const MARKETS_LIST_TTL = 5 * 60 * 1000;
 const MARKETS_PAGE_SIZE = 25;
 const DOMINANCE_TTL = 60 * 1000;
 const FNG_TTL = 45 * 60 * 1000;
 const FNG_URL = "https://api.alternative.me/fng/?limit=1";
 const APP_TABS = ["home", "markets", "plan", "analytics", "more"];
-// Símbolos meme conocidos para la pestaña "Meme Coins" (el endpoint /markets
-// no trae categoría; se filtra por símbolo sobre el top de capitalización).
-const MEME_SYMBOLS = new Set([
-  "DOGE", "SHIB", "PEPE", "WIF", "FLOKI", "BONK", "BOME", "MEME", "BRETT",
-  "MOG", "POPCAT", "PONKE", "NEIRO", "TURBO", "SPX", "GIGA", "PNUT", "FARTCOIN",
-  "MEW", "TRUMP", "BABYDOGE", "AKITA", "ELON"
-]);
 // Cada pestaña recuerda su posición de scroll: al volver no hay saltos ni
 // se hereda el desplazamiento de la pestaña anterior. (Debe declararse antes
 // de la llamada a init(): las const de módulo no se izan.)
@@ -101,7 +94,6 @@ const tabScrollPositions = {};
 const CAP_STEPS = [0, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12];
 // Aviso obligatorio del Plan (const antes de init() para evitar TDZ).
 const PLAN_DISCLAIMER = "Propuesta basada en tu estrategia y distribucion objetivo. No constituye asesoramiento financiero.";
-let planRebResult = null;
 // Estado del editor-portal (declarado antes de init() para evitar TDZ).
 let editorSearchTimer = null;
 let editorPortal = null;
@@ -269,7 +261,7 @@ const state = {
   currencySwitchId: 0,
   filterQuery: "",
   filters: { category: "all", performance: "all", weightMin: 0, capMin: 0, favorites: false, alerts: false },
-  plan: { subtab: "rebal", rebalStrategy: "equilibrada", rebalAmount: null, tp: {} },
+  plan: { tp: {}, tpAll: { p1: 30, p2: 50, p3: 100 } },
   heroVisible: true,
   editorRowId: null,
   rowMenuOpen: false,
@@ -278,11 +270,11 @@ const state = {
   detailRange: "1d",
   marketsList: [],
   marketsListAt: 0,
-  marketsTab: "top",
   marketsQuery: "",
   marketsPage: 1,
   marketsLoading: false,
-  analyticsTab: "summary",
+  // Orden de la tabla de mercado (columna + dirección).
+  marketsSort: { key: "marketCap", dir: "desc" },
   lastRefreshAt: 0,
   market: {
     btc: null,
@@ -590,11 +582,15 @@ function setActiveTab(tab) {
 
   if (nextTab === "analytics" && state.prefs.showCharts) {
     // Chart.js se carga perezosamente solo al abrir Analitica; los skeletons
-    // del panel se ocultan cuando el primer render termina.
+    // del panel se ocultan cuando el primer render termina. Al ser una vista
+    // única (sin sub-pestañas), los gráficos se dibujan ya visibles.
     ensureChartJs()
       .then(() => {
+        try { state.charts.pie?.destroy(); } catch { /* noop */ }
+        try { state.charts.line?.destroy(); } catch { /* noop */ }
+        state.charts.pie = null;
+        state.charts.line = null;
         updateCharts(buildSnapshot());
-        setAnalyticsTab(state.analyticsTab);
       })
       .catch(() => {});
   }
@@ -824,117 +820,6 @@ function getPlanPositions() {
     });
 }
 
-/* ── Estrategias de reparto (segura / equilibrada / rendimiento) ── */
-function strategyScore(p, strategy, curTotal, totalCap) {
-  if (!(p.price > 0)) return 0;
-  const capShare = totalCap > 0 && p.marketCap > 0 ? p.marketCap / totalCap : 0;
-  const curW = curTotal > 0 ? p.value / curTotal : 0;
-
-  if (strategy === "segura") {
-    // Prioriza gran capitalización infraponderada; frena small-caps ya pesadas.
-    const deficit = Math.max(0, capShare - curW);
-    let score = (capShare * 0.45 + deficit) * (0.2 + Math.sqrt(Math.max(0, capShare)));
-    if (capShare < 0.01 && curW > capShare) score *= 0.12;
-    return Math.max(0, score);
-  }
-  if (strategy === "equilibrada") {
-    // Combina capitalización, rendimiento y penaliza sobrepeso.
-    const perf = 1 + planClamp(-p.pnlPct / 60, -0.35, 0.6);
-    const weightPenalty = planClamp(1.25 - curW * 2.5, 0.35, 1.4);
-    return Math.max(0, (capShare * 0.5 + 0.02) * perf * weightPenalty);
-  }
-  // rendimiento: mejora del precio medio (activos por debajo de su media).
-  const below = p.avg > 0 && p.price > 0 ? Math.max(0, (p.avg - p.price) / p.avg) : 0;
-  const capDamp = planClamp(Math.sqrt(Math.max(0, capShare)) * 3, 0.12, 1);
-  const score = below * capDamp;
-  return score > 0 ? score : capShare * 0.3 + 0.01;
-}
-
-function computeRebalance(amount, strategy) {
-  const positions = getPlanPositions().filter((p) => p.price > 0);
-  if (!positions.length) return { error: "no-positions" };
-  if (!(amount > 0)) return { error: "no-amount" };
-
-  const curTotal = positions.reduce((s, p) => s + (p.value > 0 ? p.value : 0), 0);
-  const totalCap = positions.reduce((s, p) => s + (p.marketCap > 0 ? p.marketCap : 0), 0);
-  const scores = positions.map((p) => strategyScore(p, strategy, curTotal, totalCap));
-  let totalScore = scores.reduce((s, x) => s + x, 0);
-  const effective = totalScore > 0 ? scores : positions.map(() => 1);
-  if (totalScore <= 0) totalScore = positions.length;
-
-  const newTotal = curTotal + amount;
-  let items = positions.map((p, i) => {
-    const alloc = Math.round((amount * (effective[i] / totalScore)) * 100) / 100;
-    return buildRebalItem(p, alloc, curTotal, newTotal);
-  });
-
-  // Reparte el redondeo sobrante en el activo mejor puntuado.
-  const assigned = items.reduce((s, it) => s + it.alloc, 0);
-  const remainder = Math.round((amount - assigned) * 100) / 100;
-  if (Math.abs(remainder) >= 0.01 && items.length) {
-    const idx = items.reduce((best, it, i) => (it.alloc > items[best].alloc ? i : best), 0);
-    const p = positions[idx];
-    items[idx] = buildRebalItem(p, Math.max(0, items[idx].alloc + remainder), curTotal, newTotal);
-  }
-
-  items.sort((a, b) => b.alloc - a.alloc);
-  const funded = items.filter((i) => i.alloc > 0.005);
-  const smallShare = amount > 0
-    ? funded.reduce((s, i) => s + (i.marketCap > 0 && i.marketCap < 2e9 ? i.alloc : 0), 0) / amount
-    : 0;
-  let risk = strategy === "segura" ? "low" : strategy === "equilibrada" ? "medium" : "high";
-  if (strategy !== "segura" && smallShare > 0.5) risk = "high";
-  if (strategy === "equilibrada" && smallShare < 0.15) risk = "medium";
-
-  const improved = funded.filter((i) => i.avgOld > 0 && i.avgNew < i.avgOld);
-  const avgImprovePct = improved.length
-    ? improved.reduce((s, i) => s + (i.avgOld - i.avgNew) / i.avgOld * 100, 0) / improved.length
-    : 0;
-
-  return {
-    amount, strategy, items, funded, curTotal, newTotal,
-    risk, topAsset: funded[0] || null, fundedCount: funded.length,
-    avgImprovePct, improvedCount: improved.length
-  };
-}
-
-function buildRebalItem(p, alloc, curTotal, newTotal) {
-  const units = p.price > 0 ? alloc / p.price : 0;
-  const newTokens = p.tokens + units;
-  const newInvest = p.investment + alloc;
-  const avgNew = newTokens > 0 ? newInvest / newTokens : p.avg;
-  const curW = curTotal > 0 ? (p.value / curTotal) * 100 : 0;
-  const newValue = p.value + alloc;
-  const newW = newTotal > 0 ? (newValue / newTotal) * 100 : 0;
-  return { ...p, alloc, units, curW, newW, avgOld: p.avg, avgNew, avgDiff: avgNew - p.avg, newValue };
-}
-
-function applyRebalance(result) {
-  if (!result || result.error) return;
-  if (!window.confirm(t("reb.applyConfirm", { amount: formatCurrency(result.amount) }))) return;
-  let n = 0;
-  result.funded.forEach((it) => {
-    const row = getRowById(it.id);
-    if (!row || !(it.price > 0) || !(it.alloc > 0)) return;
-    const curTokens = parseDecimal(row.tokens);
-    const curInv = parseDecimal(row.investment);
-    const newTokens = curTokens + it.alloc / it.price;
-    const newInv = curInv + it.alloc;
-    row.tokens = formatEditableNumber(newTokens);
-    row.investment = formatEditableNumber(newInv);
-    row.entryPrice = newTokens > 0 ? formatEditableNumber(newInv / newTokens) : "";
-    row.derivedField = "";
-    recordTrade({ type: "buy", rowId: row.id, symbol: row.symbol || row.crypto, tokens: it.alloc / it.price, price: it.price, amount: it.alloc });
-    n += 1;
-  });
-  if (!n) return;
-  persistState(true);
-  renderAll();
-  pushActivity(t("reb.appliedTitle"), t("reb.appliedText", { amount: formatCurrency(result.amount) }), "positive");
-  showToast(t("reb.appliedTitle"), t("reb.appliedText", { amount: formatCurrency(result.amount) }), "positive");
-  renderPlan();
-}
-
 /* ── Simulador de Take Profits ── */
 function getTpConfig(rowId) {
   // Precio del TP en la fila (editor/CSV); % de venta aquí.
@@ -1076,136 +961,15 @@ function computeTpGlobalFull() {
     }));
 }
 
-/* ── Render de la pestaña (dos sub-herramientas) ── */
+/* ── Render de la pestaña Plan: únicamente el Simulador de Take Profit ── */
 function renderPlan() {
   const box = document.getElementById("planContent");
   if (!box) return;
-  const sub = state.plan.subtab === "tp" ? "tp" : "rebal";
-
-  box.innerHTML = `
-    <nav class="sub-tabs" id="planSubTabs" role="tablist">
-      <button class="sub-tab ${sub === "rebal" ? "is-active" : ""}" type="button" data-plan-sub="rebal">${escapeHtml(t("reb.tab"))}</button>
-      <button class="sub-tab ${sub === "tp" ? "is-active" : ""}" type="button" data-plan-sub="tp">${escapeHtml(t("tp.tab"))}</button>
-    </nav>
-    <div id="planSubContent"></div>
-  `;
-  if (sub === "tp") { renderTpTool(); } else { renderRebalTool(); }
-}
-
-function renderRebalTool() {
-  const box = document.getElementById("planSubContent");
-  if (!box) return;
-  const positions = getPlanPositions().filter((p) => p.price > 0);
-  if (!positions.length) {
-    box.innerHTML = `<div class="panel plan-empty detail-empty"><strong>${escapeHtml(t("reb.emptyTitle"))}</strong><p>${escapeHtml(t("reb.emptyText"))}</p></div>`;
-    return;
-  }
-  const strat = state.plan.rebalStrategy || "equilibrada";
-  const amount = Number(state.plan.rebalAmount) || 0;
-  const chip = (key) => `<button class="plan-mode ${strat === key ? "is-active" : ""}" type="button" data-reb-strat="${key}">${escapeHtml(t("reb.s_" + key))}</button>`;
-
-  box.innerHTML = `
-    <section class="panel">
-      <label class="editor-field plan-amount-field">
-        <span>${escapeHtml(t("reb.amount"))}</span>
-        <input type="text" inputmode="decimal" id="rebAmount" value="${amount ? escapeHtml(formatEditableNumber(amount)) : ""}" placeholder="0" />
-      </label>
-      <div class="plan-presets">${[100, 250, 500, 1000].map((v) => `<button class="chip-preset" type="button" data-reb-preset="${v}">${v}</button>`).join("")}</div>
-      <div class="plan-modes reb-strats">${chip("segura")}${chip("equilibrada")}${chip("rendimiento")}</div>
-      <p class="plan-hint" id="rebStratDesc">${escapeHtml(t("reb.desc_" + strat))}</p>
-      <button class="primary-btn plan-calc-btn" type="button" data-plan-action="rebCalc">${escapeHtml(t("reb.calc"))}</button>
-      <div id="rebResult" class="plan-result"></div>
-    </section>
-    <p class="plan-disclaimer">${escapeHtml(PLAN_DISCLAIMER)}</p>
-  `;
-  if (planRebResult && !planRebResult.error) renderRebalResult(planRebResult);
-}
-
-function renderRebalResult(result) {
-  const box = document.getElementById("rebResult");
-  if (!box) return;
-  if (result.error === "no-amount") { box.innerHTML = `<p class="plan-hint">${escapeHtml(t("reb.needAmount"))}</p>`; return; }
-  if (result.error) { box.innerHTML = `<p class="plan-hint">${escapeHtml(t("reb.emptyText"))}</p>`; return; }
-
-  const riskLabel = { low: t("reb.riskLow"), medium: t("reb.riskMed"), high: t("reb.riskHigh") }[result.risk];
-  const money = (v, d) => formatCurrency(v, d);
-
-  const rows = result.funded.map((p) => `
-    <div class="reb-item">
-      <div class="reb-item-head">
-        <span class="asset-avatar">${renderAssetAvatar(p.row)}</span>
-        <strong class="reb-item-name">${escapeHtml(p.name)}</strong>
-        <strong class="reb-item-amount positive">${money(p.alloc)}</strong>
-      </div>
-      <div class="reb-item-grid">
-        <div><span>${escapeHtml(t("reb.units"))}</span><b>${formatNumber(p.units, p.units >= 1 ? 4 : 8)}</b></div>
-        <div><span>${escapeHtml(t("reb.price"))}</span><b>${money(p.price, getPriceDigits(p.price))}</b></div>
-        <div><span>${escapeHtml(t("reb.weight"))}</span><b>${p.curW.toFixed(1)}% → ${p.newW.toFixed(1)}%</b></div>
-        <div><span>${escapeHtml(t("reb.avg"))}</span><b>${p.avgOld > 0 ? money(p.avgOld, getPriceDigits(p.avgOld)) : "--"} → ${p.avgNew > 0 ? money(p.avgNew, getPriceDigits(p.avgNew)) : "--"}</b></div>
-        <div><span>${escapeHtml(t("reb.value"))}</span><b>${maskedCurrency(p.value)} → ${maskedCurrency(p.newValue)}</b></div>
-        <div><span>${escapeHtml(t("reb.avgDiff"))}</span><b class="${p.avgDiff < 0 ? "positive" : "neutral"}">${p.avgDiff < 0 ? "" : "+"}${p.avgOld > 0 ? money(p.avgDiff, getPriceDigits(Math.abs(p.avgDiff) || 1)) : "--"}</b></div>
-      </div>
-      <div class="reb-weightbar"><span class="wb-before" style="width:${Math.min(100, p.curW)}%"></span><span class="wb-after" style="width:${Math.min(100, p.newW)}%"></span></div>
-    </div>`).join("");
-
-  box.innerHTML = `
-    <div class="reb-summary">
-      <div class="reb-sum-top">
-        <strong>${escapeHtml(t("reb.summary"))}</strong>
-        <span class="risk-badge risk-${result.risk}">${escapeHtml(riskLabel)}</span>
-      </div>
-      <div class="reb-sum-grid">
-        <div><span>${escapeHtml(t("reb.total"))}</span><b>${money(result.amount)}</b></div>
-        <div><span>${escapeHtml(t("reb.nAssets"))}</span><b>${result.fundedCount}</b></div>
-        <div><span>${escapeHtml(t("reb.topAsset"))}</span><b>${result.topAsset ? escapeHtml(result.topAsset.name) : "--"}</b></div>
-        <div><span>${escapeHtml(t("reb.avgImprove"))}</span><b class="${result.avgImprovePct > 0 ? "positive" : "neutral"}">${result.improvedCount ? "-" + result.avgImprovePct.toFixed(1) + "%" : "--"}</b></div>
-      </div>
-      <p class="plan-hint">${escapeHtml(t("reb.why_" + result.strategy))}</p>
-    </div>
-    <div class="reb-list">${rows}</div>
-    <div class="plan-result-actions">
-      <button class="ghost-btn" type="button" data-plan-action="rebCompare">${escapeHtml(t("reb.compare"))}</button>
-      <button class="primary-btn" type="button" data-plan-action="rebApply">${escapeHtml(t("reb.apply"))}</button>
-    </div>
-    <div id="rebCompareBox"></div>
-    <p class="plan-disclaimer small">${escapeHtml(PLAN_DISCLAIMER)}</p>
-  `;
-}
-
-function renderRebalCompare() {
-  const box = document.getElementById("rebCompareBox");
-  if (!box || !planRebResult || planRebResult.error) return;
-  const amount = planRebResult.amount;
-  const strategies = ["segura", "equilibrada", "rendimiento"];
-  const results = strategies.map((s) => computeRebalance(amount, s));
-  const mostDiverse = results.reduce((b, r) => (r.fundedCount > (b?.fundedCount || 0) ? r : b), null);
-  const bestAvg = results.reduce((b, r) => (r.avgImprovePct > (b?.avgImprovePct || 0) ? r : b), null);
-
-  box.innerHTML = `
-    <div class="reb-compare">
-      <h3 class="home-section-title">${escapeHtml(t("reb.comparator"))}</h3>
-      <div class="reb-compare-grid">
-        ${results.map((r) => `
-          <div class="reb-compare-col ${r.strategy === planRebResult.strategy ? "is-active" : ""}">
-            <div class="reb-compare-head"><span class="risk-badge risk-${r.risk}">${escapeHtml(t("reb.s_" + r.strategy))}</span></div>
-            <div class="reb-compare-body">
-              <div><span>${escapeHtml(t("reb.nAssets"))}</span><b>${r.fundedCount}</b></div>
-              <div><span>${escapeHtml(t("reb.avgImprove"))}</span><b>${r.improvedCount ? "-" + r.avgImprovePct.toFixed(1) + "%" : "--"}</b></div>
-              <div><span>${escapeHtml(t("reb.topAsset"))}</span><b>${r.topAsset ? escapeHtml(r.topAsset.name) : "--"}</b></div>
-            </div>
-            <div class="reb-compare-assets">${r.funded.slice(0, 4).map((f) => `${escapeHtml(f.symbol || f.name)} ${formatCurrency(f.alloc)}`).join(" · ")}</div>
-          </div>`).join("")}
-      </div>
-      <ul class="reb-compare-notes">
-        <li>${escapeHtml(t("reb.mostConservative"))}: <b>${escapeHtml(t("reb.s_segura"))}</b></li>
-        <li>${escapeHtml(t("reb.bestAvg"))}: <b>${bestAvg && bestAvg.improvedCount ? escapeHtml(t("reb.s_" + bestAvg.strategy)) : "--"}</b></li>
-        <li>${escapeHtml(t("reb.bestDiverse"))}: <b>${mostDiverse ? escapeHtml(t("reb.s_" + mostDiverse.strategy)) : "--"}</b></li>
-      </ul>
-    </div>`;
+  renderTpTool();
 }
 
 function renderTpTool() {
-  const box = document.getElementById("planSubContent");
+  const box = document.getElementById("planContent");
   if (!box) return;
   const positions = getPlanPositions().filter((p) => p.tokens > 0);
   if (!positions.length) {
@@ -1385,23 +1149,6 @@ function bindPlan() {
   if (!box) return;
 
   box.addEventListener("click", (event) => {
-    const sub = event.target.closest("[data-plan-sub]");
-    if (sub) { state.plan.subtab = sub.dataset.planSub; savePlan(); renderPlan(); return; }
-    const strat = event.target.closest("[data-reb-strat]");
-    if (strat) {
-      state.plan.rebalStrategy = strat.dataset.rebStrat; savePlan();
-      box.querySelectorAll("[data-reb-strat]").forEach((b) => b.classList.toggle("is-active", b === strat));
-      const desc = document.getElementById("rebStratDesc");
-      if (desc) desc.textContent = t("reb.desc_" + state.plan.rebalStrategy);
-      if (planRebResult && !planRebResult.error) {
-        const input = document.getElementById("rebAmount");
-        planRebResult = computeRebalance(parseDecimal(input?.value), state.plan.rebalStrategy);
-        renderRebalResult(planRebResult);
-      }
-      return;
-    }
-    const preset = event.target.closest("[data-reb-preset]");
-    if (preset) { const i = document.getElementById("rebAmount"); if (i) i.value = preset.dataset.rebPreset; return; }
     const tpDel = event.target.closest("[data-tp-del]");
     if (tpDel) {
       const r = getRowById(tpDel.dataset.rowId);
@@ -1446,21 +1193,8 @@ function bindPlan() {
 
 function handlePlanAction(action) {
   switch (action) {
-    case "rebCalc": {
-      const amount = parseDecimal(document.getElementById("rebAmount")?.value);
-      state.plan.rebalAmount = amount || null; savePlan();
-      planRebResult = computeRebalance(amount, state.plan.rebalStrategy || "equilibrada");
-      renderRebalResult(planRebResult);
-      break;
-    }
-    case "rebCompare":
-      renderRebalCompare();
-      break;
-    case "rebApply":
-      applyRebalance(planRebResult);
-      break;
     case "tpApplyAll": {
-      const box = document.getElementById("planSubContent");
+      const box = document.getElementById("planContent");
       if (!box) break;
       const read = (k) => planClamp(parseDecimal(box.querySelector(`[data-tp-all="${k}"]`)?.value), 0, 100);
       const vals = { p1: read("p1"), p2: read("p2"), p3: read("p3") };
@@ -1500,20 +1234,23 @@ function openTradeSheet(mode, preselectRowId = null) {
     .map((row) => `<option value="${row.id}">${escapeHtml(assetDisplayName(row))}</option>`)
     .join("");
 
+  // Compra/venta por IMPORTE de dinero: los tokens se calculan solos con el
+  // precio de la operación y se muestran únicamente como dato informativo.
+  const amountLabel = mode === "sell" ? t("trade.amountSell") : t("trade.amountBuy");
   const amountBlock = mode === "alert"
     ? ""
     : `
       <div class="editor-grid-2">
         <label class="editor-field">
-          <span>${escapeHtml(t("trade.tokens"))}</span>
-          <input type="text" inputmode="decimal" data-trade-field="tokens" placeholder="0.00" />
+          <span>${escapeHtml(amountLabel)}</span>
+          <input type="text" inputmode="decimal" data-trade-field="amount" placeholder="0.00" />
         </label>
         <label class="editor-field">
           <span>${escapeHtml(t("trade.price"))}</span>
           <input type="text" inputmode="decimal" data-trade-field="price" placeholder="0.00" />
         </label>
       </div>
-      <p class="editor-secondary" data-trade-role="preview"></p>
+      <p class="editor-secondary trade-calc" data-trade-role="preview"></p>
     `;
 
   const alertBlock = mode === "alert"
@@ -1588,10 +1325,22 @@ function updateTradePreview(sheet) {
   if (!preview) {
     return;
   }
-  const tokens = parseDecimal(sheet.querySelector("[data-trade-field='tokens']")?.value);
+  const mode = sheet.querySelector("form")?.dataset.tradeMode;
+  const amount = parseDecimal(sheet.querySelector("[data-trade-field='amount']")?.value);
   const price = parseDecimal(sheet.querySelector("[data-trade-field='price']")?.value);
-  if (tokens > 0 && price > 0) {
-    preview.textContent = `${t("trade.total")}: ${formatCurrency(tokens * price)}`;
+  const row = getRowById(sheet.querySelector("[data-trade-field='rowId']")?.value);
+  const symbol = row ? String(row.symbol || row.crypto || "").toUpperCase() : "";
+  if (amount > 0 && price > 0) {
+    let tokens = amount / price;
+    let note = "";
+    if (mode === "sell" && row) {
+      const held = parseDecimal(row.tokens);
+      if (tokens > held + 1e-9) {
+        tokens = held;
+        note = ` · ${t("trade.sellCapped")}`;
+      }
+    }
+    preview.innerHTML = `${escapeHtml(t("trade.calcTokens"))}: <strong>${escapeHtml(formatNumber(tokens, tokens >= 1 ? 6 : 8))} ${escapeHtml(symbol)}</strong>${escapeHtml(note)}`;
   } else {
     preview.textContent = "";
   }
@@ -1666,10 +1415,15 @@ function confirmTrade(sheet) {
     return;
   }
 
-  const addTokens = parseDecimal(sheet.querySelector("[data-trade-field='tokens']").value);
+  // Entrada única: IMPORTE de dinero. Los tokens se derivan con el precio.
+  const amount = parseDecimal(sheet.querySelector("[data-trade-field='amount']").value);
   const price = parseDecimal(sheet.querySelector("[data-trade-field='price']").value);
-  if (!(addTokens > 0)) {
+  if (!(amount > 0)) {
     showToast(t("trade.invalidTitle"), t("trade.invalidText"), "warning");
+    return;
+  }
+  if (!(price > 0)) {
+    showToast(t("trade.invalidTitle"), t("trade.invalidPrice"), "warning");
     return;
   }
 
@@ -1677,8 +1431,10 @@ function confirmTrade(sheet) {
   const curInvestment = parseDecimal(row.investment);
 
   if (mode === "buy") {
-    const unitPrice = price > 0 ? price : (curTokens > 0 ? curInvestment / curTokens : 0);
-    const addInvestment = addTokens * unitPrice;
+    // Dinero invertido → tokens comprados = importe / precio.
+    const unitPrice = price;
+    const addInvestment = amount;
+    const addTokens = addInvestment / unitPrice;
     const newTokens = curTokens + addTokens;
     const newInvestment = curInvestment + addInvestment;
     row.tokens = formatEditableNumber(newTokens);
@@ -1688,22 +1444,23 @@ function confirmTrade(sheet) {
     recordTrade({ type: "buy", rowId: row.id, symbol: row.symbol || row.crypto, tokens: addTokens, price: unitPrice, amount: addInvestment });
     finishTrade(row, t("trade.buySaved", { tokens: formatNumber(addTokens, 6), asset: assetDisplayName(row) }));
   } else {
-    // Venta: mantiene el coste medio y reduce la base proporcionalmente.
+    // Venta: dinero retirado → tokens vendidos = importe / precio de venta.
+    // Mantiene el coste medio y reduce la base proporcionalmente.
     const avgCost = curTokens > 0 ? curInvestment / curTokens : 0;
-    const soldTokens = Math.min(addTokens, curTokens);
-    const newTokens = Math.max(0, curTokens - addTokens);
+    const sellPrice = price;
+    let soldTokens = amount / sellPrice;
+    if (soldTokens > curTokens) soldTokens = curTokens; // no se puede vender más de lo que se tiene
+    const newTokens = Math.max(0, curTokens - soldTokens);
     row.tokens = newTokens > 0 ? formatEditableNumber(newTokens) : "";
     row.investment = newTokens > 0 ? formatEditableNumber(newTokens * avgCost) : "";
     row.entryPrice = newTokens > 0 ? formatEditableNumber(avgCost) : "";
     row.derivedField = "";
-    // Precio de venta: el indicado o, si falta, el precio actual conocido.
-    const sellPrice = price > 0 ? price : (typeof row.currentPrice === "number" ? row.currentPrice : 0);
     recordTrade({
       type: "sell", rowId: row.id, symbol: row.symbol || row.crypto,
       tokens: soldTokens, price: sellPrice, amount: soldTokens * sellPrice,
       realized: sellPrice > 0 && avgCost > 0 ? soldTokens * (sellPrice - avgCost) : null
     });
-    finishTrade(row, t("trade.sellSaved", { tokens: formatNumber(addTokens, 6), asset: assetDisplayName(row) }));
+    finishTrade(row, t("trade.sellSaved", { tokens: formatNumber(soldTokens, 6), asset: assetDisplayName(row) }));
   }
 }
 
@@ -2090,67 +1847,63 @@ function renderDetailNotes(row) {
   `;
 }
 
-// ── Pestaña Mercados: widgets + ganadores/perdedores + ranking ──
+// ── Pestaña Mercados: una única tabla general de mercado, ordenable ──
 function renderMarketsTab() {
-  const topGrid = document.getElementById("marketsTopGrid");
-  if (topGrid) {
-    // Reutiliza los mismos widgets del Pulso del mercado de Portafolio.
-    topGrid.innerHTML = dom.marketGrid?.innerHTML || "";
-  }
-
-  // Trae el top de capitalización si la caché está caducada (una sola llamada).
+  // Trae el top por capitalización si la caché está caducada (una sola llamada).
   fetchTopMarkets();
-  renderMarketsMovers();
   renderMarketsRanking();
 }
 
-function renderMarketsMovers() {
-  const moversBox = document.getElementById("marketsMovers");
-  if (!moversBox) {
-    return;
-  }
+// Blocklist de activos que no aportan a una tabla general de mercado:
+// stablecoins y derivados envueltos/tokenizados/con staking líquido.
+const WRAPPED_SYMBOLS = new Set([
+  "WBTC", "WETH", "WEETH", "WSTETH", "STETH", "RETH", "CBETH", "WBETH",
+  "SWETH", "OSETH", "ANKRETH", "SFRXETH", "FRXETH", "MSOL", "JITOSOL",
+  "BSOL", "WBNB", "WMATIC", "WAVAX", "WHYPE", "SOLVBTC", "LBTC", "CBBTC",
+  "TBTC", "RENBTC", "BNSOL", "SUSDE", "SUSDS", "SDAI", "BUIDL", "USDY"
+]);
+const WRAPPED_NAME_RE = /wrapped|staked|restaked|liquid staking|tokenized|bridged|\bheloc\b|treasury|t-?bill|money market|savings dai/i;
 
-  // Prioriza los datos reales del top 100; si no hay, cae a la cartera.
-  let gainers;
-  let losers;
-  if (state.marketsList.length) {
-    const withChange = state.marketsList.filter((c) => Number.isFinite(c.change24h));
-    gainers = [...withChange].sort((a, b) => b.change24h - a.change24h).slice(0, 5)
-      .map((c) => ({ name: c.symbol, image: c.image, change24h: c.change24h }));
-    losers = [...withChange].sort((a, b) => a.change24h - b.change24h).slice(0, 5)
-      .map((c) => ({ name: c.symbol, image: c.image, change24h: c.change24h }));
-  } else {
-    const items = get24hInsightItems(buildSnapshot());
-    const map = (i) => ({ name: assetDisplayName(i.row), image: i.row.image, change24h: i.change24h });
-    gainers = [...items].sort((a, b) => b.change24h - a.change24h).slice(0, 5).map(map);
-    losers = [...items].sort((a, b) => a.change24h - b.change24h).slice(0, 5).map(map);
-  }
+// Volumen 24h mínimo (en moneda base) para considerar un activo con liquidez real.
+const MARKETS_MIN_VOLUME = 1000000;
+// Capitalización mínima: descarta micro-caps irrelevantes para una tabla general.
+const MARKETS_MIN_CAP = 10000000;
 
-  const avatar = (m) => m.image
-    ? `<span class="asset-avatar"><img src="${escapeHtml(m.image)}" alt="" loading="lazy" /></span>`
-    : `<span class="asset-avatar"><span>${escapeHtml(String(m.name || "?").slice(0, 3))}</span></span>`;
-  const list = (title, rows, tone) => `
-    <div class="movers-col">
-      <h3 class="movers-title ${tone}">${escapeHtml(title)}</h3>
-      ${rows.length ? rows.map((m) => `
-        <div class="mover-row">
-          ${avatar(m)}
-          <span class="mover-name">${escapeHtml(String(m.name || "").toUpperCase())}</span>
-          <span class="mover-pct ${toneClass(m.change24h)}">${formatSignedPercent(m.change24h)}</span>
-        </div>
-      `).join("") : `<p class="movers-empty">${escapeHtml(t("home.noData"))}</p>`}
-    </div>
-  `;
-
-  moversBox.innerHTML = `
-    <div class="movers-grid">
-      ${list(t("markets.gainers"), gainers, "positive")}
-      ${list(t("markets.losers"), losers, "negative")}
-    </div>
-  `;
+// Sanea una variación %: descarta valores no finitos o desorbitados (glitches de
+// datos de tokens recién listados, p. ej. +112.000.000%), que se muestran como "--".
+function saneChangePct(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && Math.abs(n) <= 100000 ? n : NaN;
 }
 
-// Top 100 por capitalización (CoinGecko /coins/markets). Network-first con
+// ¿El activo es relevante para la tabla general de mercado?
+function isRelevantMarketCoin(c) {
+  if (!c) return false;
+  if (!(Number(c.price) > 0)) return false;                 // sin precio real
+  if (!(Number(c.marketCap) >= MARKETS_MIN_CAP)) return false; // sin capitalización válida/relevante
+  if (!(Number(c.volume) >= MARKETS_MIN_VOLUME)) return false; // volumen nulo/insignificante
+  const symbol = String(c.symbol || "").toUpperCase();
+  if (STABLE_SYMBOLS.has(symbol)) return false;             // stablecoins
+  if (WRAPPED_SYMBOLS.has(symbol)) return false;            // envueltos / staking líquido
+  if (WRAPPED_NAME_RE.test(String(c.name || ""))) return false; // nombres engañosos/tokenizados
+  return true;
+}
+
+// Lista depurada: relevantes, sin duplicados por símbolo (se queda el de mayor cap).
+function getCleanMarketsList() {
+  const seen = new Map();
+  for (const c of state.marketsList) {
+    if (!isRelevantMarketCoin(c)) continue;
+    const key = String(c.symbol || c.id).toUpperCase();
+    const prev = seen.get(key);
+    if (!prev || (Number(c.marketCap) || 0) > (Number(prev.marketCap) || 0)) {
+      seen.set(key, c);
+    }
+  }
+  return [...seen.values()];
+}
+
+// Top por capitalización (CoinGecko /coins/markets). Network-first con
 // caché en localStorage (TTL 5 min) y sin peticiones simultáneas.
 async function fetchTopMarkets(force = false) {
   if (state.marketsLoading) {
@@ -2168,7 +1921,8 @@ async function fetchTopMarkets(force = false) {
   renderMarketsRanking();
   try {
     const currency = state.prefs.currency;
-    const url = `${COINGECKO_BASE}coins/markets?vs_currency=${encodeURIComponent(currency)}&order=market_cap_desc&per_page=100&page=1&sparkline=false&price_change_percentage=24h`;
+    // 250 activos, con variación 24h y 7d y sparkline de 7 días (rendimiento).
+    const url = `${COINGECKO_BASE}coins/markets?vs_currency=${encodeURIComponent(currency)}&order=market_cap_desc&per_page=250&page=1&sparkline=true&price_change_percentage=24h,7d`;
     const payload = await fetchJson(url);
     const rows = Array.isArray(payload) ? payload : [];
     if (rows.length && !payload.__swFallback) {
@@ -2178,9 +1932,12 @@ async function fetchTopMarkets(force = false) {
         name: item.name,
         image: item.image || "",
         price: Number(item.current_price),
-        change24h: Number(item.price_change_percentage_24h),
+        change24h: saneChangePct(item.price_change_percentage_24h_in_currency ?? item.price_change_percentage_24h),
+        change7d: saneChangePct(item.price_change_percentage_7d_in_currency),
         marketCap: Number(item.market_cap),
-        rank: Number(item.market_cap_rank)
+        volume: Number(item.total_volume),
+        rank: Number(item.market_cap_rank),
+        spark: Array.isArray(item.sparkline_in_7d?.price) ? item.sparkline_in_7d.price : null
       }));
       state.marketsListAt = Date.now();
       state.marketsListCurrency = currency;
@@ -2191,7 +1948,6 @@ async function fetchTopMarkets(force = false) {
   } finally {
     state.marketsLoading = false;
     if (state.prefs.activeTab === "markets") {
-      renderMarketsMovers();
       renderMarketsRanking();
     }
   }
@@ -2218,21 +1974,58 @@ function loadMarketsListCache() {
   }
 }
 
-function getMarketsFiltered() {
+// Vista de la tabla: lista depurada + búsqueda + orden por columna.
+function getMarketsView() {
   const query = normalizeSearchText(state.marketsQuery || "");
-  const favIds = new Set(state.rows.filter((r) => r.favorite && r.coinId).map((r) => r.coinId));
-  let list = state.marketsList;
-  if (state.marketsTab === "fav") {
-    list = list.filter((c) => favIds.has(c.id));
-  } else if (state.marketsTab === "meme") {
-    list = list.filter((c) => MEME_SYMBOLS.has(c.symbol));
-  }
+  let list = getCleanMarketsList();
   if (query) {
     list = list.filter((c) =>
       normalizeSearchText(c.name).includes(query) || normalizeSearchText(c.symbol).includes(query)
     );
   }
-  return list;
+  const { key, dir } = state.marketsSort || { key: "marketCap", dir: "desc" };
+  return sortMarketsList(list, key, dir);
+}
+
+// Ordena por la clave indicada; los valores no numéricos van siempre al final.
+function sortMarketsList(list, key, dir) {
+  const s = dir === "asc" ? 1 : -1;
+  const arr = [...list];
+  arr.sort((a, b) => {
+    if (key === "asset") {
+      return s * String(a.name || "").localeCompare(String(b.name || ""), "es");
+    }
+    const av = a[key];
+    const bv = b[key];
+    const aok = Number.isFinite(av);
+    const bok = Number.isFinite(bv);
+    if (!aok && !bok) return 0;
+    if (!aok) return 1;
+    if (!bok) return -1;
+    return s * (av - bv);
+  });
+  return arr;
+}
+
+// Mini-gráfico de rendimiento (sparkline de 7 días) coloreado por tendencia.
+function marketSparkline(spark, tone) {
+  if (!Array.isArray(spark) || spark.length < 2) {
+    return `<span class="mk-spark-empty">--</span>`;
+  }
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of spark) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  const range = max - min || 1;
+  const W = 80;
+  const H = 24;
+  const step = W / (spark.length - 1);
+  const points = spark
+    .map((v, i) => `${(i * step).toFixed(1)},${(H - ((v - min) / range) * H).toFixed(1)}`)
+    .join(" ");
+  return `<svg class="mk-spark ${tone}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points}" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>`;
 }
 
 function renderMarketsRanking() {
@@ -2244,19 +2037,19 @@ function renderMarketsRanking() {
 
   if (!state.marketsList.length) {
     box.innerHTML = state.marketsLoading
-      ? `<div class="markets-skeleton">${Array.from({ length: 6 }).map(() => '<span class="skeleton-line w70"></span>').join("")}</div>`
+      ? `<div class="markets-skeleton">${Array.from({ length: 8 }).map(() => '<span class="skeleton-line w70"></span>').join("")}</div>`
       : `<div class="detail-empty">${escapeHtml(isOffline() ? t("status.offlineMeta") : t("home.noData"))}</div>`;
     if (pag) pag.innerHTML = "";
     return;
   }
 
-  const filtered = getMarketsFiltered();
-  const totalPages = Math.max(1, Math.ceil(filtered.length / MARKETS_PAGE_SIZE));
+  const view = getMarketsView();
+  const totalPages = Math.max(1, Math.ceil(view.length / MARKETS_PAGE_SIZE));
   if (state.marketsPage > totalPages) {
     state.marketsPage = 1;
   }
   const start = (state.marketsPage - 1) * MARKETS_PAGE_SIZE;
-  const pageItems = filtered.slice(start, start + MARKETS_PAGE_SIZE);
+  const pageItems = view.slice(start, start + MARKETS_PAGE_SIZE);
   const ownedIds = new Set(state.rows.map((r) => r.coinId).filter(Boolean));
 
   if (!pageItems.length) {
@@ -2265,21 +2058,51 @@ function renderMarketsRanking() {
     return;
   }
 
-  box.innerHTML = pageItems.map((c) => `
-    <button class="rank-row" type="button" data-market-coin="${escapeHtml(c.id)}">
-      <span class="rank-num">${Number.isFinite(c.rank) ? c.rank : "–"}</span>
-      <span class="asset-avatar">${c.image ? `<img src="${escapeHtml(c.image)}" alt="" loading="lazy" />` : `<span>${escapeHtml(c.symbol.slice(0, 3))}</span>`}</span>
-      <span class="rank-id">
-        <strong>${escapeHtml(c.symbol)}${ownedIds.has(c.id) ? ' <em class="rank-owned">●</em>' : ""}</strong>
-        <small>${escapeHtml(c.name)}</small>
-      </span>
-      <span class="rank-price">
-        <strong>${escapeHtml(formatCurrency(c.price, getPriceDigits(c.price)))}</strong>
-        <small class="${toneClass(c.change24h)}">${Number.isFinite(c.change24h) ? formatSignedPercent(c.change24h) : "--"}</small>
-      </span>
-      <span class="rank-cap">${Number.isFinite(c.marketCap) ? formatCompactCurrency(c.marketCap) : "--"}</span>
-    </button>
-  `).join("");
+  const { key: sortKey, dir: sortDir } = state.marketsSort;
+  const arrow = sortDir === "asc" ? "▲" : "▼";
+  const th = (label, key, cls) => {
+    const active = key === sortKey;
+    return `<th class="${cls} mk-sortable${active ? " is-sorted" : ""}" data-market-sort="${key}"${active ? ` aria-sort="${sortDir === "asc" ? "ascending" : "descending"}"` : ""}><span>${escapeHtml(label)}${active ? ` <em class="mk-arrow">${arrow}</em>` : ""}</span></th>`;
+  };
+
+  const rows = pageItems.map((c) => {
+    const tone24 = toneClass(c.change24h);
+    const tone7 = toneClass(c.change7d);
+    const perfTone = Number.isFinite(c.change7d) ? tone7 : tone24;
+    return `
+    <tr class="mk-row" data-market-coin="${escapeHtml(c.id)}" tabindex="0">
+      <td class="mk-rank">${Number.isFinite(c.rank) ? c.rank : "–"}</td>
+      <td class="mk-asset">
+        <span class="asset-avatar">${c.image ? `<img src="${escapeHtml(c.image)}" alt="" loading="lazy" />` : `<span>${escapeHtml(c.symbol.slice(0, 3))}</span>`}</span>
+        <span class="mk-name"><strong>${escapeHtml(c.name)}${ownedIds.has(c.id) ? ' <em class="rank-owned">●</em>' : ""}</strong><small>${escapeHtml(c.symbol)}</small></span>
+      </td>
+      <td class="mk-price num">${escapeHtml(formatCurrency(c.price, getPriceDigits(c.price)))}</td>
+      <td class="mk-24 num ${tone24}">${Number.isFinite(c.change24h) ? formatSignedPercent(c.change24h) : "--"}</td>
+      <td class="mk-7d num ${tone7}">${Number.isFinite(c.change7d) ? formatSignedPercent(c.change7d) : "--"}</td>
+      <td class="mk-cap num">${Number.isFinite(c.marketCap) ? formatCompactCurrency(c.marketCap) : "--"}</td>
+      <td class="mk-vol num">${Number.isFinite(c.volume) ? formatCompactCurrency(c.volume) : "--"}</td>
+      <td class="mk-perf">${marketSparkline(c.spark, perfTone)}</td>
+    </tr>`;
+  }).join("");
+
+  box.innerHTML = `
+    <div class="markets-table-wrap">
+      <table class="markets-table">
+        <thead>
+          <tr>
+            <th class="mk-rank">#</th>
+            ${th(t("markets.colAsset"), "asset", "mk-asset")}
+            ${th(t("markets.colPrice"), "price", "mk-price")}
+            ${th(t("markets.col24h"), "change24h", "mk-24")}
+            ${th(t("markets.col7d"), "change7d", "mk-7d")}
+            ${th(t("markets.colCap"), "marketCap", "mk-cap")}
+            ${th(t("markets.colVol"), "volume", "mk-vol")}
+            <th class="mk-perf">${escapeHtml(t("markets.colPerf"))}</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 
   if (pag) {
     if (totalPages <= 1) {
@@ -2303,17 +2126,6 @@ function bindMarkets() {
       renderMarketsRanking();
     });
   }
-  const tabs = document.getElementById("marketsTabs");
-  if (tabs) {
-    tabs.addEventListener("click", (event) => {
-      const tab = event.target.closest("[data-markets-tab]");
-      if (!tab) return;
-      state.marketsTab = tab.dataset.marketsTab;
-      state.marketsPage = 1;
-      tabs.querySelectorAll(".markets-tab").forEach((n) => n.classList.toggle("is-active", n === tab));
-      renderMarketsRanking();
-    });
-  }
   const pag = document.getElementById("marketsPagination");
   if (pag) {
     pag.addEventListener("click", (event) => {
@@ -2327,9 +2139,29 @@ function bindMarkets() {
   const ranking = document.getElementById("marketsRanking");
   if (ranking) {
     ranking.addEventListener("click", (event) => {
-      const coinBtn = event.target.closest("[data-market-coin]");
-      if (coinBtn) {
-        handleMarketCoinTap(coinBtn.dataset.marketCoin);
+      // Orden por columna: alterna asc/desc en la columna pulsada.
+      const sortCell = event.target.closest("[data-market-sort]");
+      if (sortCell) {
+        const key = sortCell.dataset.marketSort;
+        const cur = state.marketsSort || { key: "marketCap", dir: "desc" };
+        state.marketsSort = cur.key === key
+          ? { key, dir: cur.dir === "asc" ? "desc" : "asc" }
+          : { key, dir: key === "asset" ? "asc" : "desc" };
+        state.marketsPage = 1;
+        renderMarketsRanking();
+        return;
+      }
+      const coinRow = event.target.closest("[data-market-coin]");
+      if (coinRow) {
+        handleMarketCoinTap(coinRow.dataset.marketCoin);
+      }
+    });
+    ranking.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const coinRow = event.target.closest("[data-market-coin]");
+      if (coinRow) {
+        event.preventDefault();
+        handleMarketCoinTap(coinRow.dataset.marketCoin);
       }
     });
   }
@@ -2494,7 +2326,6 @@ function bindEvents() {
   bindFab();
   bindAssetDetail();
   bindMarkets();
-  bindAnalyticsTabs();
   bindFilters();
   bindPlan();
   updateFiltersBadge();
@@ -2614,7 +2445,11 @@ function loadState() {
     state.filters = { ...state.filters, ...state.prefs.filters };
   }
   if (state.prefs.plan && typeof state.prefs.plan === "object") {
-    state.plan = { ...state.plan, ...state.prefs.plan, tp: state.prefs.plan.tp || {} };
+    // Solo se conservan los datos del simulador TP (el rebalanceo se retiró).
+    state.plan = {
+      tp: state.prefs.plan.tp || {},
+      tpAll: state.prefs.plan.tpAll || state.plan.tpAll
+    };
   }
   // Migración segura: la pestaña activa "portfolio" antigua ya no existe.
   if (state.prefs.activeTab === "portfolio") {
@@ -3896,47 +3731,10 @@ function renderAnalyticsSummary(snapshot) {
   renderAnalyticsExtras(snapshot);
 }
 
-/* ── Sub-pestañas de Analítica ── */
-function bindAnalyticsTabs() {
-  const tabs = document.getElementById("analyticsTabs");
-  if (!tabs) {
-    return;
-  }
-  tabs.addEventListener("click", (event) => {
-    const tab = event.target.closest("[data-atab]");
-    if (!tab) return;
-    setAnalyticsTab(tab.dataset.atab);
-  });
-}
-
-function setAnalyticsTab(atab) {
-  state.analyticsTab = atab;
-  document.querySelectorAll("#analyticsTabs .sub-tab").forEach((n) =>
-    n.classList.toggle("is-active", n.dataset.atab === atab)
-  );
-  document.querySelectorAll('.tab-section[data-tab="analytics"] .atab-group').forEach((group) => {
-    group.hidden = group.dataset.atab !== atab;
-  });
-  // Chart.js creado con el contenedor oculto queda a 0px y resize() no lo
-  // recupera; se recrea el gráfico con su sub-pestaña ya visible. Un pequeño
-  // retardo asegura que el layout del grupo recién mostrado esté calculado.
-  if (atab === "performance" || atab === "distribution") {
-    window.setTimeout(() => {
-      if (typeof window.Chart === "undefined") {
-        return;
-      }
-      const target = atab === "distribution" ? "pie" : "line";
-      try { state.charts[target]?.destroy(); } catch { /* noop */ }
-      state.charts[target] = null;
-      updateCharts(buildSnapshot());
-    }, 60);
-  }
-}
-
-// Comparativa 24h, reparto por categoría, tabla de concentración y riesgo.
+// Analítica unificada: mejor/peor, comparativa 24h, reparto por categoría,
+// concentración, riesgo e historial resumido de compras y ventas.
 function renderAnalyticsExtras(snapshot) {
   renderAnalyticsBestWorst(snapshot);
-  renderAnalyticsAvgTable(snapshot);
   renderAnalyticsCompare(snapshot);
   renderAnalyticsCategory(snapshot);
   renderAnalyticsConcentration(snapshot);
@@ -3944,53 +3742,7 @@ function renderAnalyticsExtras(snapshot) {
   renderAnalyticsActivityStats();
 }
 
-// Precio medio vs actual: distancia al break-even y pista de acumulación.
-function renderAnalyticsAvgTable(snapshot) {
-  const box = document.getElementById("analyticsAvgTable");
-  if (!box) return;
-  const totalValue = snapshot.totals.currentValue || 1;
-  const rows = snapshot.items
-    .filter((i) => i.metrics.tokens > 0 && i.metrics.entryPrice > 0)
-    .map((i) => {
-      const m = i.metrics;
-      const weight = (m.currentValue / totalValue) * 100;
-      const dist = m.currentPrice > 0 ? ((m.currentPrice - m.entryPrice) / m.entryPrice) * 100 : null;
-      // Pista: por debajo de media con peso contenido → candidato a promediar;
-      // por debajo pero ya pesado → promediar aumenta el riesgo.
-      let hint = "";
-      let hintTone = "";
-      if (dist != null && dist < -3) {
-        if (weight < 25) { hint = t("analytics.avgCandidate"); hintTone = "positive"; }
-        else { hint = t("analytics.avgTooHeavy"); hintTone = "warning"; }
-      } else if (dist == null) {
-        hint = t("analytics.noPrice");
-        hintTone = "warning";
-      }
-      return { i, m, weight, dist, hint, hintTone };
-    })
-    .sort((a, b) => (a.dist ?? 999) - (b.dist ?? 999));
-
-  if (!rows.length) {
-    box.innerHTML = `<p class="movers-empty">${escapeHtml(t("home.noData"))}</p>`;
-    return;
-  }
-  box.innerHTML = `
-    <div class="avg-row avg-head">
-      <span>${escapeHtml(t("reb.asset"))}</span><span>${escapeHtml(t("tp.avg"))}</span><span>${escapeHtml(t("tp.now"))}</span><span>${escapeHtml(t("analytics.distance"))}</span><span>${escapeHtml(t("reb.weight"))}</span>
-    </div>
-    ${rows.map((r) => `
-      <div class="avg-row">
-        <span class="avg-asset"><span class="asset-avatar">${renderAssetAvatar(r.i.row)}</span>${escapeHtml(r.i.row.symbol || assetDisplayName(r.i.row))}</span>
-        <span>${formatCurrency(r.m.entryPrice, getPriceDigits(r.m.entryPrice))}</span>
-        <span>${r.m.currentPrice > 0 ? formatCurrency(r.m.currentPrice, getPriceDigits(r.m.currentPrice)) : "--"}</span>
-        <span class="${r.dist != null ? toneClass(r.dist) : ""}">${r.dist != null ? formatSignedPercent(r.dist) : "--"}</span>
-        <span>${r.weight.toFixed(1)}%</span>
-        ${r.hint ? `<small class="avg-hint ${r.hintTone}">${escapeHtml(r.hint)}</small>` : ""}
-      </div>`).join("")}
-  `;
-}
-
-// Actividad mensual: compras/ventas por mes + acumulados (desde el ledger).
+// Historial resumido: compras/ventas por mes + acumulados (desde el ledger).
 function renderAnalyticsActivityStats() {
   const box = document.getElementById("analyticsActivityStats");
   if (!box) return;
@@ -4320,6 +4072,11 @@ function renderCarteraSummary(snapshot) {
 }
 
 function renderActivity() {
+  // El listado de actividad se retiró de la interfaz (pestaña "Actividad"
+  // eliminada). Se conserva el estado interno, pero no hay dónde pintarlo.
+  if (!dom.activityList) {
+    return;
+  }
   if (!state.activity.length) {
     dom.activityList.innerHTML = `
       <div class="empty-state">${escapeHtml(t("activity.empty"))}</div>
