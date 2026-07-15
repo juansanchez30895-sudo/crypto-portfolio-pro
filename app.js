@@ -138,6 +138,7 @@ const TRANSLATIONS = window.APP_I18N?.TRANSLATIONS || {};
 
 const DEFAULT_PREFS = {
   theme: "dark",
+  oled: false,
   currency: "usd",
   language: "es",
   portfolioName: "",
@@ -329,6 +330,7 @@ const dom = {
   currencySelect: document.getElementById("currencySelect"),
   autoRefreshSelect: document.getElementById("autoRefreshSelect"),
   themeToggle: document.getElementById("themeToggle"),
+  oledToggle: document.getElementById("oledToggle"),
   apiStatus: document.getElementById("apiStatus"),
   apiStatusMeta: document.getElementById("apiStatusMeta"),
   saveStatus: document.getElementById("saveStatus"),
@@ -2533,6 +2535,7 @@ function bindEvents() {
   restoreInput?.addEventListener("change", handleRestoreJson);
   dom.toggleChartsBtn.addEventListener("click", toggleCharts);
   dom.themeToggle.addEventListener("click", toggleTheme);
+  dom.oledToggle?.addEventListener("click", toggleOled);
   dom.portfolioNameInput.addEventListener("input", (event) => {
     savePortfolioName(event.target.value);
   });
@@ -5850,6 +5853,31 @@ function applyTheme() {
   document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
     meta.setAttribute("content", themeColor);
   });
+  // OLED es una capa sobre el modo oscuro; se reevalúa tras cambiar de tema.
+  applyOled();
+}
+
+// Tema OLED: capa negra profunda sobre el modo oscuro (independiente del
+// toggle claro/oscuro). Solo tiene efecto visual cuando el tema es "dark".
+function toggleOled() {
+  state.prefs.oled = !state.prefs.oled;
+  applyOled();
+  savePreferences();
+}
+
+function applyOled() {
+  const active = Boolean(state.prefs.oled);
+  document.documentElement.dataset.oled = active ? "on" : "";
+  if (dom.oledToggle) {
+    dom.oledToggle.classList.toggle("is-active", active);
+    dom.oledToggle.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+  // En OLED sobre oscuro, el marco del navegador/PWA va a negro puro.
+  if (active && state.prefs.theme === "dark") {
+    document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
+      meta.setAttribute("content", "#000000");
+    });
+  }
 }
 
 function isAutoRefreshAllowed() {

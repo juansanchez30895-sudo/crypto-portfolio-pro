@@ -28,6 +28,7 @@ window.APP_I18N = {
       "status.lastSyncLong": "Ultima sincronizacion: {time}",
       "theme.light": "Modo claro",
       "theme.dark": "Modo oscuro",
+      "theme.oled": "Negro OLED",
       "summary.ariaLabel": "Resumen del portafolio",
       "summary.totalInvested": "Total invertido",
       "summary.totalValue": "Valor actual total",
