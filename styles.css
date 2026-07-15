@@ -6314,3 +6314,53 @@ body.filters-open { overflow: hidden; }
   --safe-left: env(safe-area-inset-left, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
 }
+
+/* ═══════════════════════════════════════════════════════
+   LÍNEA DE PRECIO TP — vista visual de medio, actual y
+   objetivos con marcadores alcanzado/pendiente (sección 34).
+   ═══════════════════════════════════════════════════════ */
+.tp-line { margin: var(--space-1) 0 var(--space-2); }
+.tpl-top { position: relative; height: 18px; }
+.tpl-now-lbl {
+  position: absolute; transform: translateX(-50%); bottom: 0;
+  font-family: var(--font-mono); font-size: 0.66rem; font-weight: 700;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+  padding: 1px var(--space-2); border-radius: 999px;
+}
+.tpl-now-lbl.up { color: var(--positive); background: var(--positive-bg); }
+.tpl-now-lbl.down { color: var(--negative); background: var(--negative-bg); }
+.tpl-track {
+  position: relative; height: 10px; border-radius: 999px;
+  background: var(--panel-soft); border: 1px solid var(--line);
+}
+.tpl-fill {
+  position: absolute; top: -1px; bottom: -1px; border-radius: 999px;
+  transition: left var(--dur-base) var(--ease-out), width var(--dur-base) var(--ease-out);
+}
+.tpl-fill.up { background: linear-gradient(90deg, var(--accent-2-dim), var(--accent)); }
+.tpl-fill.down { background: linear-gradient(90deg, var(--negative), var(--negative-bg)); }
+.tpl-tp {
+  position: absolute; top: 50%; width: 3px; height: 16px;
+  transform: translate(-50%, -50%); border-radius: 2px; z-index: 1;
+}
+.tpl-tp.reached { background: var(--accent); box-shadow: 0 0 6px var(--accent-dim); }
+.tpl-tp.pending { background: var(--muted); }
+.tpl-entry {
+  position: absolute; top: 50%; width: 10px; height: 10px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  background: var(--text-2); border-radius: 2px; z-index: 2;
+}
+.tpl-now {
+  position: absolute; top: 50%; width: 12px; height: 12px;
+  transform: translate(-50%, -50%); border-radius: 50%;
+  background: var(--text); box-shadow: 0 0 0 3px var(--panel); z-index: 3;
+}
+.tpl-below { position: relative; height: 15px; margin-top: var(--space-1); }
+.tpl-entry-lbl, .tpl-tp-lbl {
+  position: absolute; transform: translateX(-50%); top: 0;
+  font-family: var(--font-mono); font-size: 0.56rem; white-space: nowrap;
+}
+.tpl-entry-lbl { color: var(--text-2); }
+.tpl-tp-lbl.reached { color: var(--accent); }
+.tpl-tp-lbl.pending { color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .tpl-fill { transition: none; } }

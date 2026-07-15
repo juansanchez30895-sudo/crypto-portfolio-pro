@@ -30,6 +30,7 @@ window.APP_I18N = {
       "theme.dark": "Modo oscuro",
       "theme.oled": "Negro OLED",
       "density.compact": "Vista compacta",
+      "tp.lineAria": "Linea de precio: medio, actual y objetivos TP",
       "summary.ariaLabel": "Resumen del portafolio",
       "summary.totalInvested": "Total invertido",
       "summary.totalValue": "Valor actual total",

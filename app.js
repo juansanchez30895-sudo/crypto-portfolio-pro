@@ -1057,6 +1057,53 @@ function renderTpTool() {
       </div>
     </section>` : "";
 
+  // Línea de precio con marcadores: medio, actual y cada TP.
+  // Escala lineal entre el mínimo y el máximo de los precios relevantes.
+  const buildTpPriceLine = (p, sim) => {
+    const entry = p.avg > 0 ? p.avg : 0;
+    const cur = p.price > 0 ? p.price : 0;
+    const levels = sim.levels || [];
+    const pts = [entry, cur, ...levels.map((l) => l.price)].filter((v) => v > 0);
+    if (!(entry > 0) || !(cur > 0) || pts.length < 2) return "";
+    let lo = Math.min(...pts);
+    let hi = Math.max(...pts);
+    const pad = (hi - lo || hi || 1) * 0.12;
+    lo -= pad; hi += pad;
+    const span = (hi - lo) || 1;
+    const xPct = (v) => Math.max(3, Math.min(97, ((v - lo) / span) * 100));
+    const entryX = xPct(entry);
+    const curX = xPct(cur);
+    const up = cur >= entry;
+    const fillLeft = Math.min(entryX, curX);
+    const fillW = Math.abs(curX - entryX);
+    const ticks = levels.map((l) => {
+      const reached = cur >= l.price;
+      const dist = ((l.price - cur) / cur) * 100;
+      const title = `${l.label} · ${formatCurrency(l.price, getPriceDigits(l.price))} · ${dist >= 0 ? "+" : ""}${dist.toFixed(1)}%`;
+      return `<span class="tpl-tp ${reached ? "reached" : "pending"}" style="left:${xPct(l.price)}%" title="${escapeHtml(title)}"></span>`;
+    }).join("");
+    const labels = levels.map((l) => {
+      const reached = cur >= l.price;
+      return `<span class="tpl-tp-lbl ${reached ? "reached" : "pending"}" style="left:${xPct(l.price)}%">${l.label}${reached ? " ✓" : ""}</span>`;
+    }).join("");
+    return `
+      <div class="tp-line" role="img" aria-label="${escapeHtml(t("tp.lineAria"))}">
+        <div class="tpl-top">
+          <span class="tpl-now-lbl ${up ? "up" : "down"}" style="left:${curX}%">${formatCurrency(cur, getPriceDigits(cur))}</span>
+        </div>
+        <div class="tpl-track">
+          <span class="tpl-fill ${up ? "up" : "down"}" style="left:${fillLeft}%; width:${fillW}%"></span>
+          ${ticks}
+          <span class="tpl-entry" style="left:${entryX}%" title="${escapeHtml(t("tp.avg") + " " + formatCurrency(entry, getPriceDigits(entry)))}"></span>
+          <span class="tpl-now" style="left:${curX}%"></span>
+        </div>
+        <div class="tpl-below">
+          <span class="tpl-entry-lbl" style="left:${entryX}%">${escapeHtml(t("tp.avg"))}</span>
+          ${labels}
+        </div>
+      </div>`;
+  };
+
   // ── BLOQUE 4-6: detalle por activo ──
   const perAsset = positions.map((p) => {
     const sim = computeTpProgressive(p);
@@ -1114,6 +1161,7 @@ function renderTpTool() {
     return `
       <section class="panel tp-card">
         ${head}
+        ${buildTpPriceLine(p, sim)}
         ${configBlock}
         <div class="tp-steps">${steps}</div>
         <div class="tp-summary">
