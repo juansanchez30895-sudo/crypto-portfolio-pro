@@ -602,10 +602,15 @@ function setActiveTab(tab) {
     button.setAttribute("aria-current", active ? "page" : "false");
   });
 
+  if (nextTab === "analytics") {
+    // Subpestañas: aplica la activa (Mi portafolio por defecto) y construye
+    // Herramientas solo si corresponde (carga diferida).
+    setAnalyticsSub(state.analyticsSub || "portfolio");
+  }
+
   if (nextTab === "analytics" && state.prefs.showCharts) {
     // Chart.js se carga perezosamente solo al abrir Analitica; los skeletons
-    // del panel se ocultan cuando el primer render termina. Al ser una vista
-    // única (sin sub-pestañas), los gráficos se dibujan ya visibles.
+    // del panel se ocultan cuando el primer render termina.
     ensureChartJs()
       .then(() => {
         try { state.charts.pie?.destroy(); } catch { /* noop */ }
@@ -2599,6 +2604,7 @@ function bindEvents() {
   dom.densityToggle?.addEventListener("click", toggleDensity);
   bindCapComparator();
   bindAnalyticsSummary();
+  bindAnalyticsSubNav();
   dom.portfolioNameInput.addEventListener("input", (event) => {
     savePortfolioName(event.target.value);
   });
@@ -4168,13 +4174,87 @@ function renderAnalyticsSummary(snapshot) {
 // Analítica unificada: mejor/peor, comparativa 24h, reparto por categoría,
 // concentración, riesgo e historial resumido de compras y ventas.
 function renderAnalyticsExtras(snapshot) {
+  renderAnalyticsContribution(snapshot);
   renderAnalyticsBestWorst(snapshot);
-  renderAnalyticsCompare(snapshot);
   renderAnalyticsCategory(snapshot);
   renderAnalyticsConcentration(snapshot);
   renderAnalyticsRisk(snapshot);
   renderAnalyticsActivityStats();
-  renderCapComparator();
+  renderAnalyticsCompare(snapshot);
+  // Herramientas: se construye solo cuando su subpestaña está activa (carga diferida).
+  if (state.analyticsSub === "tools") renderCapComparator();
+}
+
+// Subpestañas de Analítica: Mi portafolio / Comparativas / Herramientas.
+function setAnalyticsSub(sub) {
+  const valid = ["portfolio", "compare", "tools"];
+  const next = valid.includes(sub) ? sub : "portfolio";
+  state.analyticsSub = next;
+  document.querySelectorAll("#analyticsSubNav .asub-tab").forEach((btn) => {
+    const active = btn.dataset.asubTarget === next;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll('.tab-section[data-tab="analytics"] .asub-group').forEach((g) => {
+    g.hidden = g.dataset.asub !== next;
+  });
+  if (next === "tools") renderCapComparator();
+  // Los gráficos ocultos quedan a 0px; se recrean al mostrar su grupo.
+  if (next === "portfolio" && typeof window.Chart !== "undefined") {
+    window.setTimeout(() => { try { updateCharts(buildSnapshot()); } catch { /* noop */ } }, 60);
+  }
+  window.scrollTo({ top: 0 });
+}
+
+function bindAnalyticsSubNav() {
+  const nav = document.getElementById("analyticsSubNav");
+  if (!nav) return;
+  nav.addEventListener("click", (e) => {
+    const tab = e.target.closest("[data-asub-target]");
+    if (tab) setAnalyticsSub(tab.dataset.asubTarget);
+  });
+}
+
+// Origen del rendimiento: contribución monetaria de cada activo al resultado
+// (B/P no realizada por activo). Distinta de la rentabilidad individual.
+function renderAnalyticsContribution(snapshot) {
+  const box = document.getElementById("analyticsContribution");
+  if (!box) return;
+  const items = snapshot.items
+    .filter((i) => i.metrics.investment > 0 || i.metrics.currentValue > 0)
+    .map((i) => ({ row: i.row, name: assetDisplayName(i.row), symbol: (i.row.symbol || "").toUpperCase(), pnl: i.metrics.pnlUsd, pct: i.metrics.pnlPct }))
+    .filter((i) => Math.abs(i.pnl) > 0.005)
+    .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl));
+
+  if (!items.length) {
+    box.innerHTML = `<p class="movers-empty">${escapeHtml(t("origin.empty"))}</p>`;
+    return;
+  }
+  // Agrupar impacto mínimo en "Otros" (más de 6 filas).
+  let rows = items;
+  if (items.length > 6) {
+    const head = items.slice(0, 5);
+    const restPnl = items.slice(5).reduce((s, i) => s + i.pnl, 0);
+    rows = head.concat([{ name: t("charts.others"), symbol: "", pnl: restPnl, pct: null, isOther: true }]);
+  }
+  const maxAbs = Math.max(...rows.map((r) => Math.abs(r.pnl))) || 1;
+  const totalPnl = items.reduce((s, i) => s + i.pnl, 0);
+
+  box.innerHTML = `
+    <p class="contrib-hint">${escapeHtml(t("origin.hint"))}</p>
+    <div class="contrib-list">
+      ${rows.map((r) => {
+        const w = Math.max(3, (Math.abs(r.pnl) / maxAbs) * 100);
+        const share = totalPnl !== 0 ? (r.pnl / totalPnl) * 100 : null;
+        const pos = r.pnl >= 0;
+        return `
+        <div class="contrib-row">
+          <div class="contrib-id">${r.isOther ? "" : `<span class="asset-avatar">${renderAssetAvatar(r.row)}</span>`}<span class="contrib-sym">${escapeHtml(r.symbol || r.name)}</span></div>
+          <div class="contrib-bar"><span class="${pos ? "pos" : "neg"}" style="width:${w}%"></span></div>
+          <div class="contrib-val"><b class="${pos ? "positive" : "negative"}">${maskedSignedCurrency(r.pnl)}</b>${share != null && !r.isOther ? `<small>${share >= 0 ? "+" : ""}${share.toFixed(0)}%</small>` : ""}</div>
+        </div>`;
+      }).join("")}
+    </div>`;
 }
 
 /* ═══════════════════════════════════════════════════════

@@ -6517,3 +6517,44 @@ body.filters-open { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .as-period, .as-breakdown > summary::after { transition: none; }
 }
+
+/* ═══════════════════════════════════════════════════════
+   ANALÍTICA: subpestañas (Mi portafolio / Comparativas /
+   Herramientas) + bloque "Origen del rendimiento".
+   ═══════════════════════════════════════════════════════ */
+.asub-nav {
+  position: sticky; top: max(6px, var(--safe-top));
+  z-index: var(--z-sticky);
+  display: flex; gap: 4px; padding: 4px;
+  margin: 0 0 var(--space-3);
+  background: var(--panel-strong); border: 1px solid var(--line);
+  border-radius: var(--radius-md); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+}
+.asub-tab {
+  flex: 1; min-height: var(--control-md); border: none; border-radius: var(--radius-sm);
+  background: transparent; color: var(--muted); font: inherit; font-size: 0.78rem; font-weight: 600;
+  cursor: pointer; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast);
+}
+.asub-tab.is-active { background: var(--panel-hover); color: var(--text); box-shadow: var(--shadow-sm); }
+.asub-tab:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.asub-group { display: flex; flex-direction: column; gap: var(--space-3); }
+.asub-group[hidden] { display: none; }
+
+.contrib-block { display: flex; flex-direction: column; gap: var(--space-3); }
+.contrib-hint { font-size: 0.72rem; color: var(--muted); line-height: 1.4; margin: 0; }
+.contrib-list { display: flex; flex-direction: column; gap: var(--space-2); }
+.contrib-row { display: grid; grid-template-columns: minmax(58px, auto) 1fr minmax(88px, auto); align-items: center; gap: var(--space-2); }
+.contrib-id { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.contrib-id .asset-avatar { width: 20px; height: 20px; flex: 0 0 auto; }
+.contrib-sym { font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contrib-bar { height: 8px; border-radius: 999px; background: var(--panel-hover); overflow: hidden; position: relative; }
+.contrib-bar > span { display: block; height: 100%; border-radius: 999px; transition: width var(--dur-base) var(--ease-out); }
+.contrib-bar > span.pos { background: var(--positive); }
+.contrib-bar > span.neg { background: var(--negative); }
+.contrib-val { text-align: right; display: flex; flex-direction: column; }
+.contrib-val b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.8rem; white-space: nowrap; }
+.contrib-val small { font-family: var(--font-mono); font-size: 0.6rem; color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .asub-tab, .contrib-bar > span { transition: none; }
+}

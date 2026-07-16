@@ -235,27 +235,22 @@
         </div>
       </header>
 
-      <!-- Vista única: todos los bloques en la misma pantalla -->
+      <!-- Subnavegación sticky: Mi portafolio / Comparativas / Herramientas -->
+      <nav class="asub-nav" id="analyticsSubNav" role="tablist" aria-label="Secciones de analitica" data-i18n-aria-label="asub.ariaLabel">
+        <button class="asub-tab is-active" type="button" role="tab" data-asub-target="portfolio" aria-selected="true" data-i18n="asub.portfolio">Mi portafolio</button>
+        <button class="asub-tab" type="button" role="tab" data-asub-target="compare" aria-selected="false" data-i18n="asub.compare">Comparativas</button>
+        <button class="asub-tab" type="button" role="tab" data-asub-target="tools" aria-selected="false" data-i18n="asub.tools">Herramientas</button>
+      </nav>
+
       <div class="analytics-view">
+        <!-- ═══ MI PORTAFOLIO ═══ -->
+        <div class="asub-group" data-asub="portfolio">
         <!-- Resumen: valor, invertido, B/P, rendimiento -->
         <section class="panel analytics-summary-panel">
           <div class="panel-heading compact-heading">
-            <h2 class="home-section-title" data-i18n="analytics.summaryTitle">Resumen del rendimiento</h2>
+            <h2 class="home-section-title" data-i18n="analytics.summaryTitle">Rendimiento</h2>
           </div>
           <div id="analyticsSummaryGrid" class="analytics-summary-grid"></div>
-        </section>
-
-        <!-- Mejor y peor activo -->
-        <section class="panel">
-          <div id="analyticsBestWorst" class="best-worst-grid"></div>
-        </section>
-
-        <!-- Comparador de capitalización -->
-        <section class="panel cap-panel">
-          <div class="panel-heading compact-heading">
-            <h2 class="home-section-title" data-i18n="cap.title">Comparador de capitalizacion</h2>
-          </div>
-          <div id="capComparator" class="cap-comparator"></div>
         </section>
 
         <!-- Evolución del portafolio -->
@@ -291,20 +286,17 @@
           </article>
         </section>
 
-        <!-- Comparativa 24h -->
+        <!-- Origen del rendimiento (contribución por activo) -->
         <section class="panel">
           <div class="panel-heading compact-heading">
-            <h2 class="home-section-title" data-i18n="analytics.vsTitle">Comparativa 24h vs BTC y ETH</h2>
+            <h2 class="home-section-title" data-i18n="origin.title">De donde viene tu resultado</h2>
           </div>
-          <div id="analyticsCompare" class="compare-block"></div>
+          <div id="analyticsContribution" class="contrib-block"></div>
         </section>
 
-        <!-- Insights -->
-        <section class="panel insights-panel">
-          <div class="panel-heading compact-heading">
-            <h2 class="home-section-title" data-i18n="insights.title">Insights del Portafolio</h2>
-          </div>
-          <div id="insightsRankingsGrid" class="insights-rankings-grid"></div>
+        <!-- Mejor y peor activo -->
+        <section class="panel">
+          <div id="analyticsBestWorst" class="best-worst-grid"></div>
         </section>
 
         <!-- Distribución por activos -->
@@ -323,25 +315,54 @@
           </div>
           <div id="analyticsCategory" class="category-block"></div>
         </section>
+
+        <!-- Riesgo y concentración -->
         <section class="panel">
           <div class="panel-heading compact-heading">
             <h2 class="home-section-title" data-i18n="analytics.concentrationTitle">Concentracion</h2>
           </div>
           <div id="analyticsConcentration" class="concentration-block"></div>
         </section>
-
-        <!-- Riesgo -->
         <section class="panel">
           <div id="analyticsRisk" class="risk-block"></div>
         </section>
 
-        <!-- Historial resumido de compras y ventas -->
+        <!-- Actividad y aportaciones -->
         <section class="panel">
           <div class="panel-heading compact-heading">
             <h2 class="home-section-title" data-i18n="analytics.activityStats">Compras y ventas por mes</h2>
           </div>
           <div id="analyticsActivityStats" class="acts-block"></div>
         </section>
+
+        <!-- Insights del portafolio -->
+        <section class="panel insights-panel">
+          <div class="panel-heading compact-heading">
+            <h2 class="home-section-title" data-i18n="insights.title">Insights del Portafolio</h2>
+          </div>
+          <div id="insightsRankingsGrid" class="insights-rankings-grid"></div>
+        </section>
+        </div><!-- /Mi portafolio -->
+
+        <!-- ═══ COMPARATIVAS ═══ -->
+        <div class="asub-group" data-asub="compare" hidden>
+          <section class="panel">
+            <div class="panel-heading compact-heading">
+              <h2 class="home-section-title" data-i18n="analytics.vsTitle">Comparativa 24h vs BTC y ETH</h2>
+            </div>
+            <div id="analyticsCompare" class="compare-block"></div>
+          </section>
+        </div>
+
+        <!-- ═══ HERRAMIENTAS ═══ -->
+        <div class="asub-group" data-asub="tools" hidden>
+          <section class="panel cap-panel">
+            <div class="panel-heading compact-heading">
+              <h2 class="home-section-title" data-i18n="cap.title">Comparador de capitalizacion</h2>
+            </div>
+            <div id="capComparator" class="cap-comparator"></div>
+          </section>
+        </div>
 
         <button id="toggleChartsBtn" class="hidden" type="button" aria-hidden="true"></button>
       </div>
